@@ -7,6 +7,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
 
+import { initDatabase, saveMemberAnalysis, markAsSentToSlack, closeDatabase } from './db.js'
+
 dotenv.config();
 
 const log = {
@@ -61,7 +63,7 @@ class SlackAIAgent {
         this.slack.error(async (error) => log.error('Slack error:', error.message))
     }
 
-        setupExpress() {
+    setupExpress() {
         this.app.use(express.json());
 
         this.app.get('/health', (req, res) => {
@@ -107,7 +109,7 @@ class SlackAIAgent {
         };
     }
 
-        async analyzeAndPostMember(memberInfo) {
+    async analyzeAndPostMember(memberInfo) {
         let analysisId = null;
         try {
             log.info(`Processing member: ${memberInfo.name}`)
@@ -129,7 +131,7 @@ class SlackAIAgent {
         }
     }
 
-        async doBasicResearch(memberInfo) {
+    async doBasicResearch(memberInfo) {
         const results = [];
         try {
             if (memberInfo.email && !this.isPersonalEmail(memberInfo.email)) {
@@ -148,7 +150,7 @@ class SlackAIAgent {
         return results;
     }
 
-        async getCompanyInfo(domain) {
+    async getCompanyInfo(domain) {
         try {
             const response = await axios.get(`https://www.${domain}`, {
                 timeout: 5000,
@@ -170,7 +172,7 @@ class SlackAIAgent {
         }
     }
 
-        async getGitHubInfo(name) {
+    async getGitHubInfo(name) {
         try {
             const response = await axios.get(
                 `https://api.github.com/search/users?q=${encodeURIComponent(name)}`,
@@ -192,7 +194,8 @@ class SlackAIAgent {
         return null;
     }
 
-        async analyzeWithAI(memberInfo, researchData) {
+
+    async analyzeWithAI(memberInfo, researchData) {
         const prompt = ChatPromptTemplate.fromTemplate(
             `Analyze this new community member for fit with our commercial 
     product.
@@ -254,7 +257,7 @@ class SlackAIAgent {
         }
     }
 
-        async postAnalysisToChannel(member, analysis, researchData) {
+    async postAnalysisToChannel(member, analysis, researchData) {
         const color = analysis.fitScore >= 80 ? '#36a64f'
             : analysis.fitScore >= 60 ? '#ffb84d'
                 : analysis.fitScore >= 40 ? '#ff9500' : '#ff4444';
@@ -320,13 +323,14 @@ class SlackAIAgent {
         log.info(`Analysis posted to channel for ${member.name}`)
     }
 
-        isPersonalEmail(email) {
+    isPersonalEmail(email) {
         const personalDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com'];
         const domain = email.split('@')[1]?.toLowerCase();
         return personalDomains.includes(domain);
     }
 
-        async start() {
+
+    async start() {
         try {
             log.info('🗄️ Initilazing database...')
             await initDatabase()
@@ -365,7 +369,6 @@ class SlackAIAgent {
         }
         process.exit(0)
     }
-
 }
 
 const agent = new SlackAIAgent()
@@ -379,4 +382,3 @@ agent.start().catch(error => {
 })
 
 export default agent
-
