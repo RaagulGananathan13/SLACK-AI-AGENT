@@ -254,6 +254,78 @@ class SlackAIAgent {
         }
     }
 
+        async postAnalysisToChannel(member, analysis, researchData) {
+        const color = analysis.fitScore >= 80 ? '#36a64f'
+            : analysis.fitScore >= 60 ? '#ffb84d'
+                : analysis.fitScore >= 40 ? '#ff9500' : '#ff4444';
+
+        const blocks = [
+            {
+                type: 'header',
+                text: { type: 'plain_text', text: `🔍 New Member: ${member.name}` }
+            },
+            {
+                type: 'section',
+                fields: [
+                    { type: 'mrkdwn', text: `*Fit Score:* ${analysis.fitScore}/100` },
+                    { type: 'mrkdwn', text: `*Email:* ${member.email || 'Not provided'}` },
+                    { type: 'mrkdwn', text: `*Title:* ${member.title || 'Not provided'}` },
+                ]
+            }
+        ];
+
+        if (analysis.insights.length > 0) {
+            blocks.push({
+                type: 'section',
+                text: {
+                    type: 'mrkdwn',
+                    text: `*Insights:*\n${analysis.insights.map(i =>
+                        `• ${i}`).join('\n')}`
+                }
+            })
+        }
+
+        if (analysis.recommendations.length > 0) {
+            blocks.push({
+                type: 'section',
+                text: {
+                    type: 'mrkdwn',
+                    text: `*Recommendations:*\n${analysis.recommendations.map(i =>
+                        `• ${i}`).join('\n')}`
+                }
+            });
+        }
+
+        blocks.push({
+            type: 'context',
+            elements: [
+                {
+                    type: 'mrkdwn',
+                    text: `📊 Analyzed: ${new Date().toISOString()}`
+                }
+            ]
+        });
+
+        await this.webClient.chat.postMessage({
+            channel: process.env.SLACK_PRIVATE_CHANNEL_ID,
+            text: `New Member Analysis: ${member.name} (${analysis.fitScore}/100)`,
+            attachments: [
+                {
+                    color: color,
+                    blocks: blocks
+                }
+            ]
+        });
+
+        log.info(`Analysis posted to channel for ${member.name}`)
+    }
+
+        isPersonalEmail(email) {
+        const personalDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com'];
+        const domain = email.split('@')[1]?.toLowerCase();
+        return personalDomains.includes(domain);
+    }
+
     
 
 }
