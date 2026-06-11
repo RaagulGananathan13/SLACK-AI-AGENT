@@ -61,5 +61,34 @@ class SlackAIAgent {
         this.slack.error(async (error) => log.error('Slack error:', error.message))
     }
 
+        setupExpress() {
+        this.app.use(express.json());
+
+        this.app.get('/health', (req, res) => {
+            res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+        })
+
+        if (process.env.NODE_ENV === 'development') {
+            this.app.post('/test/analyze-member', async (req, res) => {
+                try {
+                    const { memberInfo } = req.body;
+                    if (!memberInfo) return res.status(400).json({ error: 'memberInfo is required' })
+                    const analysis = await this.analyzeAndPostMember(memberInfo);
+                    res.json({ success: true, analysis, timestamp: new Date().toISOString() });
+                } catch (error) {
+                    log.error('Test analysis error:', error.message)
+                    res.status(500).json({ error: 'Analysis failed', message: error.message })
+                }
+            });
+        }
+
+        this.app.use((err, req, res, next) => {
+            log.error('Express error', err.message)
+            res.status(500).json({ error: 'Internal server error' })
+        })
+    }
+
+    
+
 }
 
