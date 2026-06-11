@@ -192,6 +192,68 @@ class SlackAIAgent {
         return null;
     }
 
+        async analyzeWithAI(memberInfo, researchData) {
+        const prompt = ChatPromptTemplate.fromTemplate(
+            `Analyze this new community member for fit with our commercial 
+    product.
+
+    Company: ${process.env.COMPANY_NAME || 'Your Company'}
+    Product: ${process.env.COMPANY_PRODUCT || 'Your Product'}
+
+    Member:
+    - Name: {name}
+    - Email: {email}
+    - Title: {title}
+
+    Research Data:
+    {research}
+
+    Provide a JSON response with:
+    - fitScore (0-100): likelihood they'd be interested in our product
+    - insights: array of 3-5 key observations
+    - recommendations: array of 2-4 engagement suggestions
+
+    Consider job title, company size, technical background, and budget 
+    authority.`
+        );
+
+
+        try {
+            const researchSummary = researchData.length > 0
+                ? researchData.map(r => `${r.title}: ${r.content}`).join(`\\n`)
+                : 'Limited research data available'
+
+            const chain = prompt.pipe(this.openai);
+            const result = await chain.invoke({
+                name: memberInfo.name,
+                email: memberInfo.email || 'Not provided',
+                title: memberInfo.title || 'not provided',
+                research: researchSummary
+            });
+
+            const responseText = result.content || result;
+
+            const cleanedResponse =
+                responseText.replace(/```json\n?|\n?```/g, '').trim()
+
+            const analysis = JSON.parse(cleanedResponse)
+
+            return {
+                fitScore: Math.max(0, Math.min(100, analysis.fitScore || 50)),
+                insights: Array.isArray(analysis.insights) ? analysis.insights : ['Analysis completed'],
+                recommendations: Array.isArray(analysis.recommendations) ? analysis.recommendations : ['Follow up recommended']
+            }
+
+        } catch (error) {
+            log.error('AI analysis error:', error.message);
+            return {
+                fitScore: 50,
+                insights: ['Unable to complete full analysis'],
+                recommendations: ['Manual review recommended']
+            }
+        }
+    }
+
     
 
 }
