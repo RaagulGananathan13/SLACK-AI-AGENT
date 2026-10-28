@@ -4,8 +4,9 @@ const { Pool } = pg;
 import config from './config.js';
 import log from './logger.js';
 
-// columns are TIMESTAMP (no zone) written in UTC, but pg would parse them as local time
+// columns are TIMESTAMP (no zone) written in UTC, but pg would read and write them as local time
 pg.types.setTypeParser(pg.types.builtins.TIMESTAMP, value => new Date(`${value.replace(' ', 'T')}Z`));
+pg.defaults.parseInputDatesAsUTC = true;
 
 let pool;
 
@@ -37,7 +38,21 @@ const schema = [
     `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS welcome_message TEXT`,
     `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS model VARCHAR(150)`,
     `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS slack_channel VARCHAR(50)`,
-    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS slack_ts VARCHAR(50)`
+    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS slack_ts VARCHAR(50)`,
+    `CREATE TABLE IF NOT EXISTS analysis_jobs (
+        id SERIAL PRIMARY KEY,
+        member_id VARCHAR(255) NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}',
+        status VARCHAR(20) NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        run_after TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_error TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    // one live job per member, so team_join + a few channel joins collapse into one analysis
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_member ON analysis_jobs(member_id) WHERE status IN ('queued', 'running')`,
+    `CREATE INDEX IF NOT EXISTS idx_jobs_queued ON analysis_jobs(run_after) WHERE status = 'queued'`
 ];
 
 export async function initDatabase(existingPool) {
@@ -149,6 +164,97 @@ export async function markAsSentToSlack(analysisId, message = {}) {
             updated_at = CURRENT_TIMESTAMP
          WHERE id = $1`, [analysisId, message.channel || null, message.ts || null]
     );
+}
+
+export async function wasRecentlyAnalyzed(memberId, days) {
+    const result = await query(
+        `SELECT 1 FROM member_analyses
+         WHERE member_id = $1 AND analyzed_at > CURRENT_TIMESTAMP - make_interval(days => $2)
+         LIMIT 1`, [memberId, days]
+    );
+    return result.rowCount > 0;
+}
+
+// an earlier attempt of this job may have saved the analysis and then failed to post it
+export async function getUnsentAnalysis(memberId, jobId) {
+    const result = await query(
+        `SELECT * FROM member_analyses
+         WHERE member_id = $1
+           AND sent_to_slack = FALSE
+           AND analyzed_at >= (SELECT created_at FROM analysis_jobs WHERE id = $2)
+         ORDER BY analyzed_at DESC
+         LIMIT 1`, [memberId, jobId]
+    );
+    return toRecord(result.rows[0]);
+}
+
+export async function enqueueJob(memberId, payload = {}) {
+    const result = await query(
+        `INSERT INTO analysis_jobs (member_id, payload)
+         VALUES ($1, $2)
+         ON CONFLICT (member_id) WHERE status IN ('queued', 'running') DO NOTHING
+         RETURNING id`, [memberId, JSON.stringify(payload)]
+    );
+    return result.rows[0]?.id ?? null;
+}
+
+// SKIP LOCKED lets more than one instance pull from this table without double-processing
+export async function claimJob() {
+    const result = await query(
+        `UPDATE analysis_jobs
+         SET status = 'running', attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = (
+             SELECT id FROM analysis_jobs
+             WHERE status = 'queued' AND run_after <= CURRENT_TIMESTAMP
+             ORDER BY run_after, id
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED
+         )
+         RETURNING id, member_id, payload, attempts, created_at`
+    );
+    return result.rows[0] ?? null;
+}
+
+export async function completeJob(id) {
+    await query(
+        `UPDATE analysis_jobs
+         SET status = 'done', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`, [id]
+    );
+}
+
+export async function failJob(id, error, retryInSeconds = null) {
+    if (retryInSeconds === null) {
+        await query(
+            `UPDATE analysis_jobs
+             SET status = 'failed', last_error = $2, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1`, [id, error]
+        );
+        return;
+    }
+    await query(
+        `UPDATE analysis_jobs
+         SET status = 'queued',
+             last_error = $2,
+             run_after = CURRENT_TIMESTAMP + make_interval(secs => $3),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`, [id, error, retryInSeconds]
+    );
+}
+
+// jobs a crashed process left behind; old enough that nobody is still working on them
+export async function requeueStaleJobs(minutes = 10) {
+    const result = await query(
+        `UPDATE analysis_jobs
+         SET status = 'queued', updated_at = CURRENT_TIMESTAMP
+         WHERE status = 'running' AND updated_at < CURRENT_TIMESTAMP - make_interval(mins => $1)`, [minutes]
+    );
+    return result.rowCount;
+}
+
+export async function getJobCounts() {
+    const result = await query('SELECT status, COUNT(*)::int AS count FROM analysis_jobs GROUP BY status');
+    return Object.fromEntries(result.rows.map(row => [row.status, row.count]));
 }
 
 export async function checkDatabase() {

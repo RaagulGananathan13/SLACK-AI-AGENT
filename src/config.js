@@ -7,6 +7,8 @@ const int = (value, fallback) => {
     return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+const list = value => (value || '').split(',').map(item => item.trim()).filter(Boolean);
+
 // every provider here speaks the openai chat completions protocol
 export const providers = {
     groq: {
@@ -49,7 +51,9 @@ const config = {
         botToken: process.env.SLACK_BOT_TOKEN,
         appToken: process.env.SLACK_APP_TOKEN,
         signingSecret: process.env.SLACK_SIGNING_SECRET,
-        channelId: process.env.SLACK_PRIVATE_CHANNEL_ID
+        channelId: process.env.SLACK_PRIVATE_CHANNEL_ID,
+        // empty means every public channel, like before
+        watchChannels: list(process.env.WATCH_CHANNEL_IDS)
     },
     llm: {
         provider,
@@ -65,6 +69,11 @@ const config = {
     },
     github: {
         token: process.env.GITHUB_TOKEN
+    },
+    analysis: {
+        reanalyzeAfterDays: int(process.env.REANALYZE_AFTER_DAYS, 30),
+        concurrency: int(process.env.ANALYSIS_CONCURRENCY, 2),
+        maxAttempts: int(process.env.ANALYSIS_MAX_ATTEMPTS, 3)
     },
     database: {
         url: process.env.DATABASE_URL,
