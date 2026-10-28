@@ -1,0 +1,48 @@
+# Create the app from this file: https://api.slack.com/apps -> Create New App -> From a manifest
+display_information:
+  name: AI Agent
+  description: Researches new community members, scores them as leads and keeps your team in the loop.
+  background_color: "#1f2937"
+
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: AI Agent
+    always_online: true
+  slash_commands:
+    - command: /agent
+      description: Analyze a member, list top leads or show stats
+      usage_hint: "analyze @someone | leads [days] | stats [days] | digest | forget @someone"
+      should_escape: true
+
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read  # questions in the leads channel
+      - channels:read      # joins in public channels
+      - chat:write         # analyses, digest, welcome DMs
+      - commands           # /agent
+      - groups:history     # thread context in the private leads channel
+      - groups:read        # joins + member list of the private leads channel
+      - im:history         # questions in DMs
+      - im:write           # opening the welcome DM
+      - users:read         # profile, title, timezone
+      - users:read.email   # email domain for company research
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_home_opened
+      - app_mention
+      - member_joined_channel
+      - member_left_channel
+      - message.im
+      - team_join
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
