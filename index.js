@@ -130,6 +130,7 @@ class SlackAIAgent {
             if (analysisId) {
                 await markAsSentToSlack(analysisId);
             }
+            return { id: analysisId, ...analysis, research: researchData };
         } catch (error) {
             log.error(`Error processing ${memberInfo.name}:`, error.message);
             if (analysisId) {
