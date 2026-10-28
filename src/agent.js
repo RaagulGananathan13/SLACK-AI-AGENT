@@ -4,7 +4,7 @@ import express from 'express';
 
 import config from './config.js';
 import log from './logger.js';
-import { initDatabase, saveMemberAnalysis, markAsSentToSlack, closeDatabase } from './db.js';
+import { initDatabase, saveMemberAnalysis, markAsSentToSlack, checkDatabase, closeDatabase } from './db.js';
 import { researchMember } from './research/index.js';
 import { createChatModel } from './ai/llm.js';
 import { analyzeMember } from './ai/analyzer.js';
@@ -59,8 +59,12 @@ export class SlackAIAgent {
     setupExpress() {
         this.app.use(express.json());
 
-        this.app.get('/health', (req, res) => {
-            res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+        this.app.get('/health', async (req, res) => {
+            res.json({
+                status: 'healthy',
+                database: await checkDatabase() ? 'up' : 'down',
+                timestamp: new Date().toISOString()
+            });
         })
 
         if (config.isDev) {
