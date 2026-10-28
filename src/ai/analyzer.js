@@ -1,19 +1,7 @@
-import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 
 import config from '../config.js';
 import log from '../logger.js';
-
-export function createChatModel() {
-    const { model, apiKey } = config.openai;
-    return new ChatOpenAI({
-        model,
-        temperature: 0.3,
-        apiKey,
-        // gpt-6 models reject temperature/tools on chat completions unless reasoning is off
-        ...(model.startsWith('gpt-6') && { modelKwargs: { reasoning_effort: 'none' } })
-    });
-}
 
 export async function analyzeMember(model, memberInfo, researchData) {
     const prompt = ChatPromptTemplate.fromTemplate(

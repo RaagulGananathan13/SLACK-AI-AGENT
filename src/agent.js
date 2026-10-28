@@ -6,7 +6,8 @@ import config from './config.js';
 import log from './logger.js';
 import { initDatabase, saveMemberAnalysis, markAsSentToSlack, closeDatabase } from './db.js';
 import { researchMember } from './research/index.js';
-import { createChatModel, analyzeMember } from './ai/analyzer.js';
+import { createChatModel } from './ai/llm.js';
+import { analyzeMember } from './ai/analyzer.js';
 import { analysisMessage } from './slack/blocks.js';
 
 export class SlackAIAgent {
@@ -145,6 +146,7 @@ export class SlackAIAgent {
 
             await this.slack.start();
             log.info('⚡️ Slack bot connected');
+            log.info(`🧠 Using ${config.llm.provider} (${config.llm.model})`);
 
             log.info('🎉 Slack AI Agent is running!')
 
