@@ -1,20 +1,19 @@
 import axios from 'axios';
 
 import log from '../logger.js';
-
-const personalDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com'];
-
-export function isPersonalEmail(email) {
-    const domain = email.split('@')[1]?.toLowerCase();
-    return personalDomains.includes(domain);
-}
+import { classifyEmail } from './email.js';
+import { getCompanyInfo } from './company.js';
 
 export async function researchMember(memberInfo) {
     const results = [];
+    const { domain, type } = classifyEmail(memberInfo.email);
+
     try {
-        if (memberInfo.email && !isPersonalEmail(memberInfo.email)) {
-            const domain = memberInfo.email.split('@')[1];
-            const companyInfo = await getCompanyInfo(domain);
+        if (type === 'work') {
+            const companyInfo = await getCompanyInfo(domain).catch(error => {
+                log.warn(`Could not fetch ${domain}:`, error.message);
+                return null;
+            });
             if (companyInfo) results.push(companyInfo);
 
             if (memberInfo.name) {
@@ -26,28 +25,6 @@ export async function researchMember(memberInfo) {
         log.error('Research error:', error.message);
     }
     return results;
-}
-
-export async function getCompanyInfo(domain) {
-    try {
-        const response = await axios.get(`https://www.${domain}`, {
-            timeout: 5000,
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-
-        const titleMatch = response.data.match(/<title>(.*?)<\/title>/i)
-        const title = titleMatch ? titleMatch[1] : `Company: ${domain}`;
-
-        return {
-            url: `https://www.${domain}`,
-            title: title,
-            content: `Company website for ${domain}`,
-            type: 'company'
-        }
-    } catch (error) {
-        log.error(`Could not fetch ${domain}:`, error.message);
-        return null;
-    }
 }
 
 export async function getGitHubInfo(name) {
