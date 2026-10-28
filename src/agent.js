@@ -7,7 +7,7 @@ import log from './logger.js';
 import {
     initDatabase, saveMemberAnalysis, getAnalysis, markAsSentToSlack, checkDatabase, closeDatabase,
     wasRecentlyAnalyzed, getUnsentAnalysis, enqueueJob, claimJob, completeJob, failJob,
-    requeueStaleJobs, getJobCounts
+    requeueStaleJobs, getJobCounts, isOptedOut
 } from './db.js';
 import { JobWorker } from './queue.js';
 import { researchMember } from './research/index.js';
@@ -16,6 +16,7 @@ import { analyzeMember } from './ai/analyzer.js';
 import { analysisMessage, escape } from './slack/blocks.js';
 import { ChannelAccess } from './slack/access.js';
 import { registerActions } from './slack/actions.js';
+import { registerCommands } from './slack/commands.js';
 import { registerHome } from './slack/home.js';
 
 export class SlackAIAgent {
@@ -40,6 +41,7 @@ export class SlackAIAgent {
 
         this.setupSlackEvents();
         registerActions(this.slack, this);
+        registerCommands(this.slack, this);
         registerHome(this.slack, this);
         this.setupExpress();
     }
@@ -120,6 +122,12 @@ export class SlackAIAgent {
     }
 
     async queueAnalysis(memberId, { force = false, ...payload } = {}) {
+        // even an explicit /agent analyze shouldn't override someone asking to be forgotten
+        if (await isOptedOut(memberId)) {
+            log.info(`Skipping ${memberId}, they asked to be forgotten`);
+            return { queued: false, reason: 'opted_out' };
+        }
+
         const days = config.analysis.reanalyzeAfterDays;
         if (!force && await wasRecentlyAnalyzed(memberId, days)) {
             log.info(`Skipping ${memberId}, already analyzed in the last ${days} days`);

@@ -53,7 +53,8 @@ const config = {
         signingSecret: process.env.SLACK_SIGNING_SECRET,
         channelId: process.env.SLACK_PRIVATE_CHANNEL_ID,
         // empty means every public channel, like before
-        watchChannels: list(process.env.WATCH_CHANNEL_IDS)
+        watchChannels: list(process.env.WATCH_CHANNEL_IDS),
+        command: process.env.SLACK_COMMAND || '/agent'
     },
     llm: {
         provider,

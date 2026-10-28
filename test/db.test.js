@@ -27,7 +27,7 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
 
     before(async () => {
         pool = new pg.Pool({ connectionString: url });
-        await pool.query('DROP TABLE IF EXISTS member_analyses, analysis_jobs, app_state CASCADE');
+        await pool.query('DROP TABLE IF EXISTS member_analyses, analysis_jobs, opted_out_members, app_state CASCADE');
         await db.initDatabase(pool);
         // the schema runs on every boot, so a second pass has to be harmless
         await db.initDatabase(pool);
@@ -35,7 +35,7 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
 
     after(() => db.closeDatabase());
 
-    beforeEach(() => pool.query('TRUNCATE member_analyses, analysis_jobs RESTART IDENTITY'));
+    beforeEach(() => pool.query('TRUNCATE member_analyses, analysis_jobs, opted_out_members RESTART IDENTITY'));
 
     test('saves an analysis and reads it back', async () => {
         const id = await db.saveMemberAnalysis(member('U1'), analysis(88), [{ type: 'github', url: 'https://github.com/x', title: 'GitHub: x' }]);
@@ -68,6 +68,26 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
         assert.equal(record.feedbackBy, 'U9');
         assert.equal(record.welcomedBy, 'U8');
         assert.ok(record.welcomedAt instanceof Date);
+    });
+
+    test('forgetting a member removes their data and blocks new analyses', async () => {
+        const posted = await db.saveMemberAnalysis(member('U1'), analysis(80), []);
+        await db.markAsSentToSlack(posted, { channel: 'C1', ts: '111.222' });
+        await db.saveMemberAnalysis(member('U1'), analysis(60), []);
+        await db.saveMemberAnalysis(member('U2'), analysis(70), []);
+        await db.enqueueJob('U1');
+
+        const result = await db.forgetMember('U1', 'UADMIN');
+
+        assert.equal(result.deleted, 2);
+        assert.deepEqual(result.messages, [{ channel: 'C1', ts: '111.222' }]);
+        assert.equal(await db.isOptedOut('U1'), true);
+        assert.equal(await db.isOptedOut('U2'), false);
+        assert.deepEqual(await db.getJobCounts(), {});
+        assert.equal((await db.getTopLeads({ days: 30 })).length, 1);
+
+        // asking twice is fine
+        assert.equal((await db.forgetMember('U1', 'UADMIN')).deleted, 0);
     });
 
     test('knows who was analyzed recently', async () => {

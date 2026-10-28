@@ -58,7 +58,12 @@ const schema = [
     )`,
     // one live job per member, so team_join + a few channel joins collapse into one analysis
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_member ON analysis_jobs(member_id) WHERE status IN ('queued', 'running')`,
-    `CREATE INDEX IF NOT EXISTS idx_jobs_queued ON analysis_jobs(run_after) WHERE status = 'queued'`
+    `CREATE INDEX IF NOT EXISTS idx_jobs_queued ON analysis_jobs(run_after) WHERE status = 'queued'`,
+    `CREATE TABLE IF NOT EXISTS opted_out_members (
+        member_id VARCHAR(255) PRIMARY KEY,
+        requested_by VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
 ];
 
 export async function initDatabase(existingPool) {
@@ -282,6 +287,31 @@ export async function getUnsentAnalysis(memberId, jobId) {
          LIMIT 1`, [memberId, jobId]
     );
     return toRecord(result.rows[0]);
+}
+
+// Deletes what we stored about a member and remembers not to analyze them again.
+// Returns the slack messages that still mention them so the caller can remove those too.
+export async function forgetMember(memberId, requestedBy) {
+    const deleted = await query(
+        'DELETE FROM member_analyses WHERE member_id = $1 RETURNING slack_channel, slack_ts', [memberId]
+    );
+    await query('DELETE FROM analysis_jobs WHERE member_id = $1', [memberId]);
+    await query(
+        `INSERT INTO opted_out_members (member_id, requested_by) VALUES ($1, $2)
+         ON CONFLICT (member_id) DO NOTHING`, [memberId, requestedBy]
+    );
+
+    return {
+        deleted: deleted.rowCount,
+        messages: deleted.rows
+            .filter(row => row.slack_channel && row.slack_ts)
+            .map(row => ({ channel: row.slack_channel, ts: row.slack_ts }))
+    };
+}
+
+export async function isOptedOut(memberId) {
+    const result = await query('SELECT 1 FROM opted_out_members WHERE member_id = $1', [memberId]);
+    return result.rowCount > 0;
 }
 
 export async function enqueueJob(memberId, payload = {}) {
