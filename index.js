@@ -43,6 +43,7 @@ class SlackAIAgent {
     setupSlackEvents() {
         this.slack.event('team_join', async ({ event }) => {
             try {
+                if (event.user.is_bot) return;
                 log.info(`New member joined: ${event.user.real_name ||
                     event.user.name}`)
                 const userInfo = await this.getUserInfo(event.user.id);
@@ -52,11 +53,14 @@ class SlackAIAgent {
             }
         });
 
-        this.slack.event('member_joined_channel', async ({ event }) => {
+        this.slack.event('member_joined_channel', async ({ event, context }) => {
             try {
+                // bolt lets this event through even when the bot itself is the one joining
+                if (event.user === context.botUserId) return;
                 if (event.channel_type === 'C') {
                     log.info(`Member ${event.user} joined channel ${event.channel}`)
                     const userInfo = await this.getUserInfo(event.user);
+                    if (userInfo.isBot) return;
                     await this.analyzeAndPostMember(userInfo)
                 }
             } catch (error) {
@@ -99,6 +103,7 @@ class SlackAIAgent {
 
         return {
             id: user.id,
+            isBot: user.is_bot || user.id === 'USLACKBOT',
             name: user.real_name || user.name,
             username: user.name,
             email: user.profile?.email,
