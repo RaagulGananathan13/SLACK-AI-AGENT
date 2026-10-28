@@ -108,7 +108,14 @@ export class SlackAIAgent {
         try {
             log.info(`Processing member: ${memberInfo.name}`)
             const researchData = await researchMember(memberInfo);
-            const analysis = await analyzeMember(this.model, memberInfo, researchData);
+            const analysis = await analyzeMember(this.model, memberInfo, researchData).catch(error => {
+                log.error('AI analysis error:', error.message);
+                return {
+                    fitScore: 50,
+                    insights: ['Unable to complete full analysis'],
+                    recommendations: ['Manual review recommended']
+                }
+            });
             log.info(`Saving analysis to database for ${memberInfo.name}`);
             analysisId = await saveMemberAnalysis(memberInfo, analysis, researchData);
             await this.postAnalysisToChannel(memberInfo, analysis);
