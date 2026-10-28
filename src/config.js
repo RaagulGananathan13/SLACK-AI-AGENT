@@ -60,7 +60,8 @@ const config = {
     },
     company: {
         name: process.env.COMPANY_NAME || 'Your Company',
-        product: process.env.COMPANY_PRODUCT || 'Your Product'
+        product: process.env.COMPANY_PRODUCT || 'Your Product',
+        idealCustomer: process.env.COMPANY_ICP || ''
     },
     github: {
         token: process.env.GITHUB_TOKEN

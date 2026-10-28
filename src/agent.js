@@ -4,7 +4,7 @@ import express from 'express';
 
 import config from './config.js';
 import log from './logger.js';
-import { initDatabase, saveMemberAnalysis, markAsSentToSlack, checkDatabase, closeDatabase } from './db.js';
+import { initDatabase, saveMemberAnalysis, getAnalysis, markAsSentToSlack, checkDatabase, closeDatabase } from './db.js';
 import { researchMember } from './research/index.js';
 import { createChatModel } from './ai/llm.js';
 import { analyzeMember } from './ai/analyzer.js';
@@ -121,13 +121,13 @@ export class SlackAIAgent {
                 }
             });
             log.info(`Saving analysis to database for ${memberInfo.name}`);
-            analysisId = await saveMemberAnalysis(memberInfo, analysis, researchData);
-            await this.postAnalysisToChannel(memberInfo, analysis);
+            const model = `${config.llm.model} (${config.llm.provider})`;
+            analysisId = await saveMemberAnalysis(memberInfo, { ...analysis, model }, researchData);
 
-            if (analysisId) {
-                await markAsSentToSlack(analysisId);
-            }
-            return { id: analysisId, ...analysis, research: researchData };
+            const record = await getAnalysis(analysisId);
+            const message = await this.postAnalysisToChannel(record);
+            await markAsSentToSlack(analysisId, message);
+            return record;
         } catch (error) {
             log.error(`Error processing ${memberInfo.name}:`, error.message);
             if (analysisId) {
@@ -137,13 +137,14 @@ export class SlackAIAgent {
         }
     }
 
-    async postAnalysisToChannel(member, analysis) {
-        await this.webClient.chat.postMessage({
+    async postAnalysisToChannel(record) {
+        const result = await this.webClient.chat.postMessage({
             channel: config.slack.channelId,
-            ...analysisMessage(member, analysis)
+            ...analysisMessage(record)
         });
 
-        log.info(`Analysis posted to channel for ${member.name}`)
+        log.info(`Analysis posted to channel for ${record.name}`)
+        return { channel: result.channel, ts: result.ts };
     }
 
     async start() {

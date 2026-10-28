@@ -104,6 +104,19 @@ describe('analysisSchema', () => {
         const result = analysisSchema.parse({ fitScore: 50, insights: ['1', '2', '3', '4', '5', '6', '7'], recommendations: ['b'] });
         assert.equal(result.insights.length, 5);
     });
+
+    test('optional fields fall back instead of failing', () => {
+        const result = analysisSchema.parse({ ...base, fitScore: 60, confidence: 'Very sure', segment: 42 });
+
+        assert.equal(result.confidence, 'low');
+        assert.equal(result.segment, '');
+        assert.equal(result.summary, '');
+        assert.equal(result.welcomeMessage, '');
+    });
+
+    test('normalizes confidence casing', () => {
+        assert.equal(analysisSchema.parse({ ...base, fitScore: 60, confidence: ' High ' }).confidence, 'high');
+    });
 });
 
 describe('memberPrompt', () => {
