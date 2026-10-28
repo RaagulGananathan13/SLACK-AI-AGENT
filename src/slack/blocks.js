@@ -30,6 +30,38 @@ function sourceLinks(research = []) {
         .join(' · ');
 }
 
+export const button = (text, actionId, value, style) => ({
+    type: 'button',
+    text: plain(text),
+    action_id: actionId,
+    value: String(value),
+    ...(style && { style })
+});
+
+// what the team already did with this lead, plus buttons for whatever is left
+function reviewBlocks(record) {
+    const blocks = [];
+    const notes = [];
+
+    if (record.feedback) {
+        const verdict = record.feedback === 'qualified' ? '✅ Marked as a good fit' : '👎 Marked as not a fit';
+        notes.push(`${verdict} by <@${record.feedbackBy}>`);
+    }
+    if (record.welcomedAt) notes.push(`👋 Welcome DM sent by <@${record.welcomedBy}>`);
+    if (notes.length > 0) blocks.push({ type: 'context', elements: [mrkdwn(notes.join('  ·  '))] });
+
+    const buttons = [];
+    if (!record.feedback) {
+        buttons.push(button('✅ Good fit', 'analysis_qualify', record.id, 'primary'));
+        buttons.push(button('👎 Not a fit', 'analysis_disqualify', record.id));
+    }
+    if (record.memberId && !record.welcomedAt) buttons.push(button('👋 Send welcome DM', 'analysis_welcome', record.id));
+    if (record.memberId) buttons.push(button('🔄 Re-analyze', 'analysis_reanalyze', record.id));
+
+    if (buttons.length > 0) blocks.push({ type: 'actions', block_id: `analysis_${record.id}`, elements: buttons });
+    return blocks;
+}
+
 export function analysisMessage(record) {
     const tier = tierFor(record.fitScore);
     const member = record.memberId ? `<@${record.memberId}>` : escape(record.name);
@@ -52,6 +84,7 @@ export function analysisMessage(record) {
     if (record.summary) blocks.push({ type: 'section', text: mrkdwn(escape(record.summary)) });
     if (record.insights?.length) blocks.push(bullets('Insights', record.insights));
     if (record.recommendations?.length) blocks.push(bullets('Recommendations', record.recommendations));
+    if (record.id) blocks.push(...reviewBlocks(record));
 
     const context = [`📊 Analyzed ${slackDate(record.analyzedAt)}`];
     if (record.model) context.push(`🧠 ${escape(record.model)}`);
@@ -62,5 +95,38 @@ export function analysisMessage(record) {
     return {
         text: `New Member Analysis: ${escape(record.name)} (${record.fitScore}/100)`,
         attachments: [{ color: tier.color, blocks }]
+    };
+}
+
+export function welcomeModal(record) {
+    const firstName = record.name?.split(' ')[0] || 'there';
+    const draft = record.welcomeMessage
+        || `Hi ${firstName}, welcome to the community! Let us know if there's anything we can help with.`;
+
+    return {
+        type: 'modal',
+        callback_id: 'welcome_dm',
+        private_metadata: JSON.stringify({ analysisId: record.id }),
+        title: plain('Welcome message'),
+        submit: plain('Send'),
+        close: plain('Cancel'),
+        blocks: [
+            {
+                type: 'section',
+                text: mrkdwn(`The bot will send this to <@${record.memberId}> as a DM. Edit it as much as you like.`)
+            },
+            {
+                type: 'input',
+                block_id: 'message',
+                label: plain('Message'),
+                element: {
+                    type: 'plain_text_input',
+                    action_id: 'text',
+                    multiline: true,
+                    max_length: 3000,
+                    initial_value: truncate(draft, 3000)
+                }
+            }
+        ]
     };
 }

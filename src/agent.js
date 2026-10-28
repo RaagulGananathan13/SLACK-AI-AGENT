@@ -14,6 +14,7 @@ import { researchMember } from './research/index.js';
 import { createChatModel } from './ai/llm.js';
 import { analyzeMember } from './ai/analyzer.js';
 import { analysisMessage, escape } from './slack/blocks.js';
+import { registerActions } from './slack/actions.js';
 
 export class SlackAIAgent {
     constructor() {
@@ -35,6 +36,7 @@ export class SlackAIAgent {
         });
 
         this.setupSlackEvents();
+        registerActions(this.slack, this);
         this.setupExpress();
     }
 

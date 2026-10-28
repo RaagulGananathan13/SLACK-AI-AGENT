@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { analysisMessage, escape } from '../src/slack/blocks.js';
+import { analysisMessage, escape, welcomeModal } from '../src/slack/blocks.js';
 
 const record = {
     id: 7,
@@ -60,6 +60,50 @@ describe('analysisMessage', () => {
     test('works for a sparse record', () => {
         const message = analysisMessage({ name: 'Sam', fitScore: 50, insights: [], recommendations: [] });
         assert.equal(blocksOf(message).length, 3);
+    });
+});
+
+describe('review buttons', () => {
+    const actionIds = message => blocksOf(message)
+        .find(block => block.type === 'actions')?.elements.map(element => element.action_id);
+
+    test('a fresh analysis offers every action', () => {
+        const message = analysisMessage(record);
+        assert.deepEqual(actionIds(message), ['analysis_qualify', 'analysis_disqualify', 'analysis_welcome', 'analysis_reanalyze']);
+        assert.ok(blocksOf(message).find(block => block.type === 'actions').elements.every(element => element.value === '7'));
+    });
+
+    test('feedback swaps the verdict buttons for a note', () => {
+        const message = analysisMessage({ ...record, feedback: 'qualified', feedbackBy: 'U9' });
+
+        assert.deepEqual(actionIds(message), ['analysis_welcome', 'analysis_reanalyze']);
+        assert.match(JSON.stringify(message), /Marked as a good fit by <@U9>/);
+    });
+
+    test('hides the welcome button once the DM went out', () => {
+        const message = analysisMessage({ ...record, welcomedAt: new Date(), welcomedBy: 'U8' });
+
+        assert.ok(!actionIds(message).includes('analysis_welcome'));
+        assert.match(JSON.stringify(message), /Welcome DM sent by <@U8>/);
+    });
+
+    test('dry runs without a saved id get no buttons', () => {
+        assert.equal(actionIds(analysisMessage({ ...record, id: undefined })), undefined);
+    });
+});
+
+describe('welcomeModal', () => {
+    test('prefills the drafted message', () => {
+        const modal = welcomeModal({ ...record, welcomeMessage: 'Hey Jane, great to have you!' });
+
+        assert.equal(modal.blocks[1].element.initial_value, 'Hey Jane, great to have you!');
+        assert.deepEqual(JSON.parse(modal.private_metadata), { analysisId: 7 });
+        assert.ok(modal.title.text.length <= 24);
+    });
+
+    test('falls back to a generic welcome', () => {
+        const modal = welcomeModal({ ...record, welcomeMessage: null });
+        assert.match(modal.blocks[1].element.initial_value, /^Hi Jane, welcome/);
     });
 });
 

@@ -39,6 +39,11 @@ const schema = [
     `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS model VARCHAR(150)`,
     `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS slack_channel VARCHAR(50)`,
     `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS slack_ts VARCHAR(50)`,
+    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS feedback VARCHAR(20)`,
+    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS feedback_by VARCHAR(50)`,
+    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS feedback_at TIMESTAMP`,
+    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS welcomed_by VARCHAR(50)`,
+    `ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS welcomed_at TIMESTAMP`,
     `CREATE TABLE IF NOT EXISTS analysis_jobs (
         id SERIAL PRIMARY KEY,
         member_id VARCHAR(255) NOT NULL,
@@ -105,7 +110,12 @@ export function toRecord(row) {
         model: row.model,
         analyzedAt: row.analyzed_at,
         slackChannel: row.slack_channel,
-        slackTs: row.slack_ts
+        slackTs: row.slack_ts,
+        feedback: row.feedback,
+        feedbackBy: row.feedback_by,
+        feedbackAt: row.feedback_at,
+        welcomedBy: row.welcomed_by,
+        welcomedAt: row.welcomed_at
     };
 }
 
@@ -163,6 +173,22 @@ export async function markAsSentToSlack(analysisId, message = {}) {
             slack_ts = COALESCE($3, slack_ts),
             updated_at = CURRENT_TIMESTAMP
          WHERE id = $1`, [analysisId, message.channel || null, message.ts || null]
+    );
+}
+
+export async function recordFeedback(id, feedback, userId) {
+    await query(
+        `UPDATE member_analyses
+         SET feedback = $2, feedback_by = $3, feedback_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`, [id, feedback, userId]
+    );
+}
+
+export async function markWelcomed(id, userId) {
+    await query(
+        `UPDATE member_analyses
+         SET welcomed_by = $2, welcomed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`, [id, userId]
     );
 }
 

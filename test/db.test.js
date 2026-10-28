@@ -58,6 +58,18 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
         assert.equal(record.slackTs, '1730000000.000100');
     });
 
+    test('records feedback and welcome DMs', async () => {
+        const id = await db.saveMemberAnalysis(member('U1'), analysis(90), []);
+        await db.recordFeedback(id, 'qualified', 'U9');
+        await db.markWelcomed(id, 'U8');
+
+        const record = await db.getAnalysis(id);
+        assert.equal(record.feedback, 'qualified');
+        assert.equal(record.feedbackBy, 'U9');
+        assert.equal(record.welcomedBy, 'U8');
+        assert.ok(record.welcomedAt instanceof Date);
+    });
+
     test('knows who was analyzed recently', async () => {
         await db.saveMemberAnalysis(member('U1'), analysis(50), []);
 
