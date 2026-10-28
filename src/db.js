@@ -1,27 +1,30 @@
 import pg from 'pg';
 const { Pool } = pg;
-import dotenv from 'dotenv';
 
-dotenv.config();
+import config from './config.js';
+import log from './logger.js';
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000
-});
+let pool;
 
-pool.on('connect', () => {
-    console.log('[INFO] Database connected');
-});
+function getPool() {
+    if (!pool) {
+        pool = new Pool({
+            connectionString: config.database.url,
+            ssl: config.database.ssl ? { rejectUnauthorized: false } : false,
+            max: 20,
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 2000
+        });
 
-pool.on('error', (err) => {
-    console.error('[ERROR] Unexpected database error:', err.message);
-});
+        pool.on('error', (err) => {
+            log.error('Unexpected database error:', err.message);
+        });
+    }
+    return pool;
+}
 
 export async function initDatabase() {
-    const client = await pool.connect();
+    const client = await getPool().connect();
     try {
         await client.query(`
         CREATE TABLE IF NOT EXISTS member_analyses (
@@ -51,10 +54,10 @@ export async function initDatabase() {
             CREATE INDEX IF NOT EXISTS idx_analyzed_at ON member_analyses(analyzed_at);
         `);
 
-        console.log('[INFO] Database schema initialized');
+        log.info('Database schema initialized');
 
     } catch (error) {
-        console.error('[ERROR] Failed to initialize database:', error.message);
+        log.error('Failed to initialize database:', error.message);
         throw error;
     } finally {
         client.release()
@@ -62,18 +65,18 @@ export async function initDatabase() {
 }
 
 export async function saveMemberAnalysis(memberInfo, analysis, researchData) {
-    const client = await pool.connect();
+    const client = await getPool().connect();
     try {
         const result = await client.query(
             `INSERT INTO member_analyses (
-            member_id, 
-            member_name, 
-            member_email, 
-            member_title, 
+            member_id,
+            member_name,
+            member_email,
+            member_title,
             member_timezone,
-            fit_score, 
-            insights, 
-            recommendations, 
+            fit_score,
+            insights,
+            recommendations,
             research_data
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id`,
@@ -89,11 +92,11 @@ export async function saveMemberAnalysis(memberInfo, analysis, researchData) {
                 JSON.stringify(researchData)
             ]);
 
-        console.log(`[INFO] Saved analysis to database with ID: ${result.rows[0].id}`);
+        log.info(`Saved analysis to database with ID: ${result.rows[0].id}`);
         return result.rows[0].id;
 
     } catch (error) {
-        console.error('[ERROR] Failed to save analysis to database:', error.message);
+        log.error('Failed to save analysis to database:', error.message);
         throw error;
     } finally {
         client.release();
@@ -101,7 +104,7 @@ export async function saveMemberAnalysis(memberInfo, analysis, researchData) {
 }
 
 export async function markAsSentToSlack(analysisId) {
-    const client = await pool.connect();
+    const client = await getPool().connect();
     try {
         await client.query(
             `UPDATE member_analyses
@@ -112,7 +115,7 @@ export async function markAsSentToSlack(analysisId) {
         );
 
     } catch (error) {
-        console.error('[ERROR] Failed to mark as sent to Slack:', error.message);
+        log.error('Failed to mark as sent to Slack:', error.message);
         throw error;
     } finally {
         client.release()
@@ -120,8 +123,8 @@ export async function markAsSentToSlack(analysisId) {
 }
 
 export async function closeDatabase() {
+    if (!pool) return;
     await pool.end();
-    console.log('[INFO] Database connection pool closed');
+    pool = null;
+    log.info('Database connection pool closed');
 }
-
-export default pool;
