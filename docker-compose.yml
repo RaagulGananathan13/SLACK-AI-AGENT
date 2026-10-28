@@ -1,0 +1,44 @@
+# docker compose up --build
+# Reads Slack tokens and your LLM key from .env, the database is wired up here.
+services:
+  agent:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://agent:agent@db:5432/agent
+      DATABASE_SSL: "false"
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent"]
+      interval: 5s
+      retries: 10
+
+  # Fully local, no API key: docker compose --profile ollama up --build
+  # then: docker compose exec ollama ollama pull llama3.1
+  # and set LLM_PROVIDER=ollama, OLLAMA_BASE_URL=http://ollama:11434/v1 in .env
+  ollama:
+    image: ollama/ollama
+    profiles: ["ollama"]
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  pgdata:
+  ollama:
