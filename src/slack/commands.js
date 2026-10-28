@@ -18,6 +18,7 @@ export function helpText(command) {
         `*${command} analyze @someone* - research and score a member right now`,
         `*${command} leads [days]* - highest scoring members, last 7 days by default`,
         `*${command} stats [days]* - numbers for the last 30 days by default`,
+        `*${command} digest* - post the weekly digest to the leads channel now`,
         `*${command} forget @someone* - delete everything stored about a member and stop analyzing them`
     ].join('\n');
 }
@@ -59,6 +60,11 @@ const subcommands = {
             text: `Stats for the last ${days} days`,
             blocks: [{ type: 'section', text: mrkdwn(`*Last ${days} days*`) }, ...statsBlocks(stats)]
         });
+    },
+
+    async digest({ respond, agent }) {
+        await agent.postDigest();
+        await respond(`📬 Posted the digest in <#${config.slack.channelId}>.`);
     },
 
     async forget({ text, command, respond, client }) {

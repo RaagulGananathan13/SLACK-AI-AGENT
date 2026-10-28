@@ -2,7 +2,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    analysisMessage, analysisModal, escape, homeView, leadList, lockedHomeView, tierChart, welcomeModal
+    analysisMessage, analysisModal, digestMessage, escape, homeView, leadList, lockedHomeView, tierChart, welcomeModal
 } from '../src/slack/blocks.js';
 
 const record = {
@@ -148,6 +148,14 @@ describe('dashboard', () => {
 
     test('empty lead list says so', () => {
         assert.match(leadList([])[0].elements[0].text, /No members analyzed/);
+    });
+
+    test('digest leads with the summary and escapes it', () => {
+        const message = digestMessage({ stats, leads: [record], summary: 'Two founders <!channel> joined.' });
+
+        assert.equal(message.blocks[0].text.text, '📬 Weekly member digest');
+        assert.equal(message.blocks[1].text.text, 'Two founders &lt;!channel&gt; joined.');
+        assert.equal(message.text, 'Weekly digest: 12 new members, 4 hot leads');
     });
 
     test('analysis modal is read-only and fits the title limit', () => {

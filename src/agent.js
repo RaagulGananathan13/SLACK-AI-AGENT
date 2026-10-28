@@ -7,14 +7,17 @@ import log from './logger.js';
 import {
     initDatabase, saveMemberAnalysis, getAnalysis, markAsSentToSlack, checkDatabase, closeDatabase,
     wasRecentlyAnalyzed, getUnsentAnalysis, enqueueJob, claimJob, completeJob, failJob,
-    requeueStaleJobs, getJobCounts, isOptedOut
+    requeueStaleJobs, getJobCounts, isOptedOut, getStats, getTopLeads,
+    claimSchedule, releaseSchedule, purgeOldData
 } from './db.js';
 import { JobWorker } from './queue.js';
+import { Scheduler } from './scheduler.js';
 import { researchMember } from './research/index.js';
 import { createChatModel } from './ai/llm.js';
 import { analyzeMember } from './ai/analyzer.js';
 import { LeadAssistant } from './ai/assistant.js';
-import { analysisMessage, escape } from './slack/blocks.js';
+import { summarizeWeek } from './ai/digest.js';
+import { analysisMessage, digestMessage, escape } from './slack/blocks.js';
 import { ChannelAccess } from './slack/access.js';
 import { registerActions } from './slack/actions.js';
 import { registerCommands } from './slack/commands.js';
@@ -40,6 +43,13 @@ export class SlackAIAgent {
             concurrency: config.analysis.concurrency,
             maxAttempts: config.analysis.maxAttempts,
             onFailure: (job, error) => this.reportFailure(job, error)
+        });
+
+        this.scheduler = new Scheduler({
+            store: { claimSchedule, releaseSchedule, purgeOldData },
+            postDigest: () => this.postDigest(),
+            digest: config.digest,
+            retentionDays: config.retentionDays
         });
 
         this.setupSlackEvents();
@@ -167,6 +177,24 @@ export class SlackAIAgent {
         });
     }
 
+    async postDigest() {
+        const [stats, leads] = await Promise.all([getStats(7), getTopLeads({ days: 7, limit: 5 })]);
+
+        // a quiet week doesn't need the model to tell us it was quiet
+        const summary = stats.total > 0
+            ? await summarizeWeek(this.model, stats, leads).catch(error => {
+                log.warn('Could not write the digest summary:', error.message);
+                return '';
+            })
+            : 'Quiet week, nobody new was analyzed.';
+
+        await this.webClient.chat.postMessage({
+            channel: config.slack.channelId,
+            ...digestMessage({ stats, leads, summary })
+        });
+        log.info('Weekly digest posted');
+    }
+
     async getUserInfo(userId) {
         const result = await this.webClient.users.info({ user: userId });
         const user = result.user;
@@ -228,6 +256,11 @@ export class SlackAIAgent {
             log.info(`🧠 Using ${config.llm.provider} (${config.llm.model})`);
 
             await this.worker.start();
+            this.scheduler.start();
+            if (config.digest.enabled) {
+                const { day, hour, timezone } = config.digest;
+                log.info(`📬 Weekly digest every ${day} at ${hour}:00 (${timezone})`);
+            }
             log.info('🎉 Slack AI Agent is running!')
 
             if (config.isDev) {
@@ -246,6 +279,7 @@ export class SlackAIAgent {
 
         log.info('Shutting down...')
         try {
+            this.scheduler.stop();
             await this.worker.stop();
             await this.slack.stop()
             if (this.server) {

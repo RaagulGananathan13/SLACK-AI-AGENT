@@ -27,7 +27,7 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
 
     before(async () => {
         pool = new pg.Pool({ connectionString: url });
-        await pool.query('DROP TABLE IF EXISTS member_analyses, analysis_jobs, opted_out_members, app_state CASCADE');
+        await pool.query('DROP TABLE IF EXISTS member_analyses, analysis_jobs, opted_out_members, scheduled_runs CASCADE');
         await db.initDatabase(pool);
         // the schema runs on every boot, so a second pass has to be harmless
         await db.initDatabase(pool);
@@ -35,7 +35,7 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
 
     after(() => db.closeDatabase());
 
-    beforeEach(() => pool.query('TRUNCATE member_analyses, analysis_jobs, opted_out_members RESTART IDENTITY'));
+    beforeEach(() => pool.query('TRUNCATE member_analyses, analysis_jobs, opted_out_members, scheduled_runs RESTART IDENTITY'));
 
     test('saves an analysis and reads it back', async () => {
         const id = await db.saveMemberAnalysis(member('U1'), analysis(88), [{ type: 'github', url: 'https://github.com/x', title: 'GitHub: x' }]);
@@ -162,6 +162,37 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
             assert.equal(stats.total, 0);
             assert.equal(stats.average, 0);
             assert.deepEqual(stats.segments, []);
+        });
+    });
+
+    describe('scheduling and cleanup', () => {
+        test('a scheduled task is claimed once per period', async () => {
+            assert.equal(await db.claimSchedule('weekly_digest', 3600), true);
+            assert.equal(await db.claimSchedule('weekly_digest', 3600), false);
+            assert.equal(await db.claimSchedule('daily_cleanup', 3600), true);
+
+            await pool.query(`UPDATE scheduled_runs SET last_run_at = NOW() - INTERVAL '2 hours'`);
+            assert.equal(await db.claimSchedule('weekly_digest', 3600), true);
+
+            await db.releaseSchedule('weekly_digest');
+            assert.equal(await db.claimSchedule('weekly_digest', 3600), true);
+        });
+
+        test('purge honours retention and keeps recent jobs', async () => {
+            await db.saveMemberAnalysis(member('U1'), analysis(50), []);
+            await db.saveMemberAnalysis(member('U2'), analysis(50), []);
+            await pool.query(`UPDATE member_analyses SET analyzed_at = NOW() - INTERVAL '100 days' WHERE member_id = 'U1'`);
+
+            const old = await db.enqueueJob('U1');
+            await db.claimJob();
+            await db.completeJob(old);
+            await pool.query(`UPDATE analysis_jobs SET updated_at = NOW() - INTERVAL '31 days'`);
+            await db.enqueueJob('U2');
+
+            assert.deepEqual(await db.purgeOldData(0), { analyses: 0, jobs: 1 });
+            assert.deepEqual(await db.purgeOldData(90), { analyses: 1, jobs: 0 });
+            assert.deepEqual((await db.getTopLeads({ days: 365 })).map(lead => lead.memberId), ['U2']);
+            assert.deepEqual(await db.getJobCounts(), { queued: 1 });
         });
     });
 

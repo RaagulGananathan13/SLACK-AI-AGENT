@@ -63,6 +63,10 @@ const schema = [
         member_id VARCHAR(255) PRIMARY KEY,
         requested_by VARCHAR(50),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS scheduled_runs (
+        name VARCHAR(100) PRIMARY KEY,
+        last_run_at TIMESTAMP NOT NULL
     )`
 ];
 
@@ -408,6 +412,40 @@ export async function requeueStaleJobs(minutes = 10) {
 export async function getJobCounts() {
     const result = await query('SELECT status, COUNT(*)::int AS count FROM analysis_jobs GROUP BY status');
     return Object.fromEntries(result.rows.map(row => [row.status, row.count]));
+}
+
+// Atomically claims a scheduled task. Only one caller gets true per period, even with
+// several instances running, so the digest goes out once.
+export async function claimSchedule(name, everySeconds) {
+    const result = await query(
+        `INSERT INTO scheduled_runs (name, last_run_at) VALUES ($1, CURRENT_TIMESTAMP)
+         ON CONFLICT (name) DO UPDATE SET last_run_at = CURRENT_TIMESTAMP
+         WHERE scheduled_runs.last_run_at < CURRENT_TIMESTAMP - make_interval(secs => $2)
+         RETURNING name`, [name, everySeconds]
+    );
+    return result.rowCount > 0;
+}
+
+export async function releaseSchedule(name) {
+    await query('DELETE FROM scheduled_runs WHERE name = $1', [name]);
+}
+
+export async function purgeOldData(retentionDays) {
+    let analyses = 0;
+    if (retentionDays > 0) {
+        const result = await query(
+            `DELETE FROM member_analyses
+             WHERE analyzed_at < CURRENT_TIMESTAMP - make_interval(days => $1)`, [retentionDays]
+        );
+        analyses = result.rowCount;
+    }
+
+    // finished jobs are only interesting while debugging recent failures
+    const jobs = await query(
+        `DELETE FROM analysis_jobs
+         WHERE status IN ('done', 'failed') AND updated_at < CURRENT_TIMESTAMP - INTERVAL '30 days'`
+    );
+    return { analyses, jobs: jobs.rowCount };
 }
 
 export async function checkDatabase() {

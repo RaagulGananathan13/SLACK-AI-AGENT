@@ -191,6 +191,22 @@ export function homeView({ stats, leads, queue = {}, model }) {
     };
 }
 
+export function digestMessage({ stats, leads, summary }) {
+    const blocks = [{ type: 'header', text: plain('📬 Weekly member digest') }];
+
+    // summary is model output, so it gets escaped like everything else
+    if (summary) blocks.push({ type: 'section', text: mrkdwn(escape(summary)) });
+    blocks.push(...statsBlocks(stats));
+    blocks.push({ type: 'divider' });
+    blocks.push({ type: 'section', text: mrkdwn('*Top leads this week*') });
+    blocks.push(...leadList(leads));
+
+    return {
+        text: `Weekly digest: ${stats.total} new members, ${stats.tiers.hot} hot leads`,
+        blocks
+    };
+}
+
 export function lockedHomeView() {
     return {
         type: 'home',

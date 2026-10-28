@@ -76,6 +76,14 @@ const config = {
         concurrency: int(process.env.ANALYSIS_CONCURRENCY, 2),
         maxAttempts: int(process.env.ANALYSIS_MAX_ATTEMPTS, 3)
     },
+    digest: {
+        enabled: process.env.DIGEST_ENABLED !== 'false',
+        day: (process.env.DIGEST_DAY || 'mon').slice(0, 3).toLowerCase(),
+        hour: int(process.env.DIGEST_HOUR, 9),
+        timezone: process.env.DIGEST_TIMEZONE || 'UTC'
+    },
+    // 0 keeps analyses forever
+    retentionDays: int(process.env.DATA_RETENTION_DAYS, 0),
     database: {
         url: process.env.DATABASE_URL,
         ssl: process.env.DATABASE_SSL !== 'false'
@@ -99,6 +107,17 @@ export function configErrors() {
         errors.push(`Unknown LLM_PROVIDER "${provider}", expected one of: ${Object.keys(providers).join(', ')}`);
     } else if (provider !== 'ollama' && !config.llm.apiKey) {
         errors.push(`No API key for ${provider}, set ${preset.apiKeyEnv} or LLM_API_KEY`);
+    }
+
+    const { day, hour, timezone } = config.digest;
+    if (!['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].includes(day)) {
+        errors.push(`DIGEST_DAY should be a weekday like "mon", got "${process.env.DIGEST_DAY}"`);
+    }
+    if (hour < 0 || hour > 23) errors.push('DIGEST_HOUR should be between 0 and 23');
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+    } catch {
+        errors.push(`DIGEST_TIMEZONE "${timezone}" is not a valid IANA timezone, e.g. Asia/Colombo`);
     }
     return errors;
 }
