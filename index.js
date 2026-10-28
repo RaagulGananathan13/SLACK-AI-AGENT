@@ -243,9 +243,10 @@ class SlackAIAgent {
                 responseText.replace(/```json\n?|\n?```/g, '').trim()
 
             const analysis = JSON.parse(cleanedResponse)
+            const score = Number(analysis.fitScore)
 
             return {
-                fitScore: Math.max(0, Math.min(100, analysis.fitScore || 50)),
+                fitScore: Number.isFinite(score) ? Math.round(Math.max(0, Math.min(100, score))) : 50,
                 insights: Array.isArray(analysis.insights) ? analysis.insights : ['Analysis completed'],
                 recommendations: Array.isArray(analysis.recommendations) ? analysis.recommendations : ['Follow up recommended']
             }
