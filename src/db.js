@@ -3,6 +3,7 @@ const { Pool } = pg;
 
 import config from './config.js';
 import log from './logger.js';
+import { tiers } from './tiers.js';
 
 // columns are TIMESTAMP (no zone) written in UTC, but pg would read and write them as local time
 pg.types.setTypeParser(pg.types.builtins.TIMESTAMP, value => new Date(`${value.replace(' ', 'T')}Z`));
@@ -174,6 +175,75 @@ export async function markAsSentToSlack(analysisId, message = {}) {
             updated_at = CURRENT_TIMESTAMP
          WHERE id = $1`, [analysisId, message.channel || null, message.ts || null]
     );
+}
+
+// re-analyses add rows, so reporting only looks at each member's most recent one.
+// Rows without a member id (dev endpoint) count on their own.
+const latestAnalyses = `
+    WITH latest AS (
+        SELECT DISTINCT ON (COALESCE(member_id, id::text)) *
+        FROM member_analyses
+        WHERE analyzed_at > CURRENT_TIMESTAMP - make_interval(days => $1)
+        ORDER BY COALESCE(member_id, id::text), analyzed_at DESC, id DESC
+    )`;
+
+const tierCounts = tiers.map((tier, i) => {
+    const upper = tiers[i - 1]?.min;
+    const range = upper === undefined ? `fit_score >= ${tier.min}` : `fit_score >= ${tier.min} AND fit_score < ${upper}`;
+    return `COUNT(*) FILTER (WHERE ${range})::int AS ${tier.name}`;
+}).join(',\n');
+
+export async function getTopLeads({ days = 7, limit = 10, minScore = 0 } = {}) {
+    const result = await query(
+        `${latestAnalyses}
+         SELECT * FROM latest
+         WHERE fit_score >= $2
+         ORDER BY fit_score DESC, analyzed_at DESC
+         LIMIT $3`, [days, minScore, limit]
+    );
+    return result.rows.map(toRecord);
+}
+
+export async function getStats(days = 30) {
+    const hot = tiers[0].min;
+    const [totals, segments] = await Promise.all([
+        query(
+            `${latestAnalyses}
+             SELECT
+                COUNT(*)::int AS total,
+                COALESCE(ROUND(AVG(fit_score)), 0)::int AS average,
+                ${tierCounts},
+                COUNT(*) FILTER (WHERE feedback = 'qualified')::int AS qualified,
+                COUNT(*) FILTER (WHERE feedback = 'disqualified')::int AS disqualified,
+                COUNT(*) FILTER (WHERE fit_score >= ${hot} AND feedback IS NOT NULL)::int AS hot_reviewed,
+                COUNT(*) FILTER (WHERE fit_score >= ${hot} AND feedback = 'qualified')::int AS hot_qualified,
+                COUNT(*) FILTER (WHERE welcomed_at IS NOT NULL)::int AS welcomed
+             FROM latest`, [days]
+        ),
+        query(
+            `${latestAnalyses}
+             SELECT segment, COUNT(*)::int AS count
+             FROM latest
+             WHERE segment IS NOT NULL AND segment <> ''
+             GROUP BY segment
+             ORDER BY count DESC, segment
+             LIMIT 5`, [days]
+        )
+    ]);
+
+    const row = totals.rows[0];
+    return {
+        days,
+        total: row.total,
+        average: row.average,
+        tiers: Object.fromEntries(tiers.map(tier => [tier.name, row[tier.name]])),
+        qualified: row.qualified,
+        disqualified: row.disqualified,
+        hotReviewed: row.hot_reviewed,
+        hotQualified: row.hot_qualified,
+        welcomed: row.welcomed,
+        segments: segments.rows
+    };
 }
 
 export async function recordFeedback(id, feedback, userId) {

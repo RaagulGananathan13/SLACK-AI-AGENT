@@ -80,6 +80,52 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
         assert.equal(await db.wasRecentlyAnalyzed('U1', 30), false);
     });
 
+    describe('reporting', () => {
+        beforeEach(async () => {
+            await db.saveMemberAnalysis(member('U1'), analysis(40, { segment: 'Student' }), []);
+            // re-analysis of U1, only this one should count
+            const latest = await db.saveMemberAnalysis(member('U1'), analysis(92, { segment: 'Founder' }), []);
+            await db.recordFeedback(latest, 'qualified', 'U9');
+
+            await db.saveMemberAnalysis(member('U2'), analysis(65, { segment: 'Founder' }), []);
+            const cold = await db.saveMemberAnalysis(member('U3'), analysis(15, { segment: 'Student' }), []);
+            await db.recordFeedback(cold, 'disqualified', 'U9');
+
+            await db.saveMemberAnalysis(member('U4'), analysis(99), []);
+            await pool.query(`UPDATE member_analyses SET analyzed_at = NOW() - INTERVAL '60 days' WHERE member_id = 'U4'`);
+        });
+
+        test('top leads use the latest analysis per member', async () => {
+            const leads = await db.getTopLeads({ days: 30 });
+            assert.deepEqual(leads.map(lead => [lead.memberId, lead.fitScore]), [['U1', 92], ['U2', 65], ['U3', 15]]);
+
+            const strong = await db.getTopLeads({ days: 30, minScore: 60, limit: 1 });
+            assert.deepEqual(strong.map(lead => lead.memberId), ['U1']);
+        });
+
+        test('stats count tiers, feedback and segments', async () => {
+            const stats = await db.getStats(30);
+
+            assert.equal(stats.total, 3);
+            assert.equal(stats.average, 57);
+            assert.deepEqual(stats.tiers, { hot: 1, warm: 1, cool: 0, cold: 1 });
+            assert.equal(stats.qualified, 1);
+            assert.equal(stats.disqualified, 1);
+            assert.equal(stats.hotReviewed, 1);
+            assert.equal(stats.hotQualified, 1);
+            assert.deepEqual(stats.segments, [{ segment: 'Founder', count: 2 }, { segment: 'Student', count: 1 }]);
+        });
+
+        test('stats for an empty window are zeros, not nulls', async () => {
+            await pool.query('TRUNCATE member_analyses');
+            const stats = await db.getStats(7);
+
+            assert.equal(stats.total, 0);
+            assert.equal(stats.average, 0);
+            assert.deepEqual(stats.segments, []);
+        });
+    });
+
     describe('jobs', () => {
         test('only one live job per member', async () => {
             assert.ok(await db.enqueueJob('U1', { reason: 'team_join' }));

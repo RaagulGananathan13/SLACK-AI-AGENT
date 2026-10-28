@@ -14,7 +14,9 @@ import { researchMember } from './research/index.js';
 import { createChatModel } from './ai/llm.js';
 import { analyzeMember } from './ai/analyzer.js';
 import { analysisMessage, escape } from './slack/blocks.js';
+import { ChannelAccess } from './slack/access.js';
 import { registerActions } from './slack/actions.js';
+import { registerHome } from './slack/home.js';
 
 export class SlackAIAgent {
     constructor() {
@@ -27,6 +29,7 @@ export class SlackAIAgent {
         });
         this.webClient = this.slack.client;
         this.model = createChatModel();
+        this.access = new ChannelAccess(this.webClient, config.slack.channelId);
 
         const jobStore = { claimJob, completeJob, failJob, requeueStaleJobs };
         this.worker = new JobWorker(jobStore, job => this.processJob(job), {
@@ -37,6 +40,7 @@ export class SlackAIAgent {
 
         this.setupSlackEvents();
         registerActions(this.slack, this);
+        registerHome(this.slack, this);
         this.setupExpress();
     }
 
@@ -54,6 +58,7 @@ export class SlackAIAgent {
 
         this.slack.event('member_joined_channel', async ({ event, context }) => {
             try {
+                if (event.channel === config.slack.channelId) this.access.reset();
                 // bolt lets this event through even when the bot itself is the one joining
                 if (event.user === context.botUserId) return;
                 if (!this.isWatchedChannel(event)) return;
@@ -63,6 +68,11 @@ export class SlackAIAgent {
             } catch (error) {
                 log.error('Error processing member_joined_channel:', error.message)
             }
+        });
+
+        // someone removed from the leads channel should lose access right away, not in 5 minutes
+        this.slack.event('member_left_channel', async ({ event }) => {
+            if (event.channel === config.slack.channelId) this.access.reset();
         });
         this.slack.error(async (error) => log.error('Slack error:', error.message))
     }

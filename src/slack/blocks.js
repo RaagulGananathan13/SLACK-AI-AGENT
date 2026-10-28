@@ -1,4 +1,4 @@
-import { tierFor } from '../tiers.js';
+import { tiers, tierFor } from '../tiers.js';
 
 // Anything that came from a member profile or the model goes through this. Without it a
 // title like "<!channel>" would ping the whole leads channel.
@@ -95,6 +95,109 @@ export function analysisMessage(record) {
     return {
         text: `New Member Analysis: ${escape(record.name)} (${record.fitScore}/100)`,
         attachments: [{ color: tier.color, blocks }]
+    };
+}
+
+export function analysisModal(record) {
+    // the buttons need a channel message to act on, so the modal is read-only
+    const blocks = analysisMessage(record).attachments[0].blocks
+        .filter(block => block.type !== 'header' && block.type !== 'actions');
+
+    return {
+        type: 'modal',
+        title: plain(truncate(record.name || 'Member', 24)),
+        close: plain('Close'),
+        blocks
+    };
+}
+
+export function leadList(records) {
+    if (records.length === 0) {
+        return [{ type: 'context', elements: [mrkdwn('No members analyzed in this period yet.')] }];
+    }
+
+    return records.map(record => {
+        const tier = tierFor(record.fitScore);
+        const who = record.memberId ? `<@${record.memberId}>` : `*${escape(record.name)}*`;
+        const details = [record.title, record.segment].filter(Boolean).map(escape).join(' · ');
+
+        return {
+            type: 'section',
+            text: mrkdwn(`${tier.emoji} *${record.fitScore}*  ${who}${details ? `\n${details}` : ''}`),
+            accessory: button('View', 'analysis_view', record.id)
+        };
+    });
+}
+
+// monospace bars render the same on desktop and mobile, unlike images
+export function tierChart(counts) {
+    const max = Math.max(1, ...tiers.map(tier => counts[tier.name]));
+    const lines = tiers.map(tier => {
+        const count = counts[tier.name];
+        const width = count > 0 ? Math.max(1, Math.round((count / max) * 20)) : 0;
+        return `${tier.label.padEnd(5)} ${'█'.repeat(width) || '·'} ${count}`;
+    });
+    return `\`\`\`\n${lines.join('\n')}\n\`\`\``;
+}
+
+export function statsBlocks(stats) {
+    const blocks = [
+        {
+            type: 'section',
+            fields: [
+                mrkdwn(`*Members analyzed*\n${stats.total}`),
+                mrkdwn(`*Average fit score*\n${stats.average}`),
+                mrkdwn(`*🔥 Hot leads*\n${stats.tiers.hot}`),
+                mrkdwn(`*👋 Welcomed*\n${stats.welcomed}`)
+            ]
+        },
+        { type: 'section', text: mrkdwn(tierChart(stats.tiers)) }
+    ];
+
+    if (stats.segments?.length) {
+        const segments = stats.segments.map(({ segment, count }) => `${escape(segment)} (${count})`).join(', ');
+        blocks.push({ type: 'context', elements: [mrkdwn(`Top segments: ${segments}`)] });
+    }
+
+    if (stats.qualified + stats.disqualified > 0) {
+        const accuracy = stats.hotReviewed > 0
+            ? ` · ${stats.hotQualified} of ${stats.hotReviewed} reviewed hot leads confirmed`
+            : '';
+        blocks.push({
+            type: 'context',
+            elements: [mrkdwn(`Team feedback: ${stats.qualified} good fit, ${stats.disqualified} not a fit${accuracy}`)]
+        });
+    }
+    return blocks;
+}
+
+export function homeView({ stats, leads, queue = {}, model }) {
+    const pending = (queue.queued || 0) + (queue.running || 0);
+    const queueText = `${pending} in queue${queue.failed ? `, ${queue.failed} failed` : ''}`;
+
+    return {
+        type: 'home',
+        blocks: [
+            { type: 'header', text: plain('📊 Member intelligence') },
+            { type: 'context', elements: [mrkdwn(`Last ${stats.days} days · updated ${slackDate(new Date())}`)] },
+            ...statsBlocks(stats),
+            { type: 'divider' },
+            { type: 'header', text: plain('🔥 Top leads this week') },
+            ...leadList(leads),
+            { type: 'divider' },
+            { type: 'context', elements: [mrkdwn(`🧠 ${escape(model)} · ${queueText}`)] },
+            { type: 'actions', elements: [button('🔄 Refresh', 'home_refresh', 'refresh')] }
+        ]
+    };
+}
+
+export function lockedHomeView() {
+    return {
+        type: 'home',
+        blocks: [
+            { type: 'header', text: plain('📊 Member intelligence') },
+            { type: 'section', text: mrkdwn('This dashboard is only for members of the private leads channel. Ask an admin to add you.') }
+        ]
     };
 }
 

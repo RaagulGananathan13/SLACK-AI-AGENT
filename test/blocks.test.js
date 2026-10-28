@@ -1,7 +1,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { analysisMessage, escape, welcomeModal } from '../src/slack/blocks.js';
+import {
+    analysisMessage, analysisModal, escape, homeView, leadList, lockedHomeView, tierChart, welcomeModal
+} from '../src/slack/blocks.js';
 
 const record = {
     id: 7,
@@ -104,6 +106,55 @@ describe('welcomeModal', () => {
     test('falls back to a generic welcome', () => {
         const modal = welcomeModal({ ...record, welcomeMessage: null });
         assert.match(modal.blocks[1].element.initial_value, /^Hi Jane, welcome/);
+    });
+});
+
+describe('dashboard', () => {
+    const stats = {
+        days: 30,
+        total: 12,
+        average: 61,
+        tiers: { hot: 4, warm: 3, cool: 0, cold: 5 },
+        qualified: 3,
+        disqualified: 1,
+        hotReviewed: 3,
+        hotQualified: 2,
+        welcomed: 2,
+        segments: [{ segment: 'Founder', count: 4 }]
+    };
+
+    test('tierChart scales bars to the biggest tier', () => {
+        const chart = tierChart(stats.tiers);
+        assert.match(chart, /Hot {3}█{16} 4/);
+        assert.match(chart, /Cool {2}· 0/);
+        assert.match(chart, /Cold {2}█{20} 5/);
+    });
+
+    test('home view shows stats, leads and feedback accuracy', () => {
+        const view = homeView({ stats, leads: [record], queue: { queued: 2, failed: 1 }, model: 'llama (groq)' });
+        const json = JSON.stringify(view);
+
+        assert.equal(view.type, 'home');
+        assert.match(json, /Members analyzed\*\\n12/);
+        assert.match(json, /2 of 3 reviewed hot leads confirmed/);
+        assert.match(json, /2 in queue, 1 failed/);
+        assert.match(json, /"action_id":"analysis_view","value":"7"/);
+        assert.ok(view.blocks.length <= 100);
+    });
+
+    test('locked view gives nothing away', () => {
+        assert.doesNotMatch(JSON.stringify(lockedHomeView()), /analysis|@U/);
+    });
+
+    test('empty lead list says so', () => {
+        assert.match(leadList([])[0].elements[0].text, /No members analyzed/);
+    });
+
+    test('analysis modal is read-only and fits the title limit', () => {
+        const modal = analysisModal({ ...record, name: 'A very long member name indeed' });
+
+        assert.ok(modal.title.text.length <= 24);
+        assert.equal(modal.blocks.some(block => block.type === 'actions'), false);
     });
 });
 
