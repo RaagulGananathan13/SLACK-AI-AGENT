@@ -6,13 +6,16 @@ services:
   - type: web
     name: slack-ai-agent
     runtime: node
+    # socket mode needs the process up all the time, free instances sleep after 15 minutes
     plan: starter
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      - key: LOG_FORMAT
+        value: json
       - key: DATABASE_URL
         fromDatabase:
           name: slack-agent-db
@@ -25,9 +28,20 @@ services:
         sync: false
       - key: SLACK_PRIVATE_CHANNEL_ID
         sync: false
+      # fill in one of these, the provider is picked from whichever key is set
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
         sync: false
       - key: COMPANY_NAME
         value: Your Company Name
       - key: COMPANY_PRODUCT
         value: Your Commercial Product
+      - key: COMPANY_ICP
+        sync: false
+      - key: DIGEST_TIMEZONE
+        value: UTC
