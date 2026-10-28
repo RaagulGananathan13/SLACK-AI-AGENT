@@ -226,7 +226,7 @@ class SlackAIAgent {
 
         try {
             const researchSummary = researchData.length > 0
-                ? researchData.map(r => `${r.title}: ${r.content}`).join(`\\n`)
+                ? researchData.map(r => `${r.title}: ${r.content}`).join('\n')
                 : 'Limited research data available'
 
             const chain = prompt.pipe(this.openai);
