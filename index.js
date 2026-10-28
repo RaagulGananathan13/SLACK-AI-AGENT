@@ -27,10 +27,13 @@ class SlackAIAgent {
             appToken: process.env.SLACK_APP_TOKEN
         });
         this.webClient = new WebClient(process.env.SLACK_BOT_TOKEN);
+        const model = process.env.OPENAI_MODEL || 'gpt-6-luna';
         this.openai = new ChatOpenAI({
-            model: "gpt-4",
+            model,
             temperature: 0.3,
-            apiKey: process.env.OPENAI_API_KEY
+            apiKey: process.env.OPENAI_API_KEY,
+            // gpt-6 models reject temperature/tools on chat completions unless reasoning is off
+            ...(model.startsWith('gpt-6') && { modelKwargs: { reasoning_effort: 'none' } })
         });
 
         this.setupSlackEvents();
