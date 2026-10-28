@@ -1,168 +1,220 @@
 # Slack AI Agent
 
-A Slack bot built with Node.js, Express, and LangChain that automatically analyzes new community members for product fit using OpenAI's GPT-4. It researches new members, scores their likelihood of being interested in your commercial product, and posts actionable insights to a private Slack channel.
+![CI](https://github.com/RaagulGananathan13/SLACK-AI-AGENT/actions/workflows/ci.yml/badge.svg)
 
-## Features
+A Slack bot that researches every new member of your community, scores them as a sales lead with an LLM, and gives your team a place to act on it: review buttons, a drafted welcome DM, a dashboard in the App Home, a weekly digest, and an assistant you can ask about leads in plain English.
 
-- **Event-Driven Analysis:** Automatically triggers when a user joins the workspace or a specific channel.
-- **Automated Research:** Scrapes the user's company website (via email domain) and GitHub profile to gather background context.
-- **AI-Powered Scoring:** Uses OpenAI (`gpt-4`) to generate a "Fit Score" (0-100), key insights, and engagement recommendations based on the gathered data and the user's job title/company.
-- **Slack Notifications:** Posts visually color-coded analysis summaries directly to a designated private Slack channel.
-- **Persistent Storage:** Stores all analyses and member data in a PostgreSQL database for historical tracking.
+Everything runs on free tiers: Groq, Gemini, OpenRouter or a local Ollama model for the LLM, public GitHub and Wikidata data for research, and a Postgres you can start with Docker.
 
-## Tech Stack
+## What it does
 
-- **Node.js** & **Express**
-- **Slack Bolt API** (`@slack/bolt`, `@slack/web-api`)
-- **LangChain** (`@langchain/openai`, `@langchain/core`)
-- **OpenAI API** (`gpt-4`)
-- **PostgreSQL** (`pg`)
-- **Render** (Deployment)
+When someone joins the workspace (or a channel you watch), the agent:
 
----
+1. **Queues them in Postgres**, so a burst of joins or a restart doesn't lose anyone, and duplicate events collapse into one analysis.
+2. **Researches them in parallel**
+   - **Company website**: name and description from the page metadata. The domain comes from the member's email, so requests to private and internal addresses are blocked.
+   - **Wikidata**: company size, industry, founding year and HQ, matched on the official website property instead of a fuzzy name search.
+   - **GitHub**: matched by email first, then by full name plus employer. Ambiguous matches are dropped, not guessed.
+3. **Scores them 0-100** against your ideal customer profile, with a confidence level, a segment, a summary, insights, next steps and a personalised welcome message.
+4. **Posts the analysis** to your private leads channel with buttons: *Good fit* / *Not a fit* (stored as feedback), *Send welcome DM* (opens the draft in an editable modal) and *Re-analyze*.
 
-## Architecture & Flow
+On top of that:
 
-### High-Level Architecture
+- **Ask the bot.** Mention it in the leads channel or DM it: *"who are the best fintech leads this month?"*, *"what do we know about @jane?"*. It answers through a tool-calling loop over read-only database queries.
+- **App Home dashboard**: 30 day stats, tier breakdown, this week's top leads, how many hot leads the team confirmed, queue health.
+- **`/agent` command**: `analyze @someone`, `leads [days]`, `stats [days]`, `digest`, `forget @someone`.
+- **Weekly digest**: stats, the top five leads and a short AI summary of the week, on the day, hour and timezone you choose.
+- **Privacy controls**: lead data is only visible to members of the leads channel, `forget` deletes a member's data and posts and stops future analysis, and there's an optional retention window.
+- **Eval harness**: `npm run eval` scores ten fixed personas (one of them a prompt injection attempt) so model and prompt changes can be compared with numbers.
+
+## Free LLM providers
+
+| Provider | Default model | Key | |
+| --- | --- | --- | --- |
+| Groq | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | free tier, very fast |
+| Google Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` | free tier from AI Studio |
+| OpenRouter | `openrouter/free` | `OPENROUTER_API_KEY` | routes to a free model that's available |
+| Ollama | `llama3.1` | none | runs on your own machine |
+| OpenAI | `gpt-6-luna` | `OPENAI_API_KEY` | paid |
+
+Set `LLM_PROVIDER`, or leave it empty and the agent uses whichever key it finds. `LLM_MODEL` overrides the model, and `LLM_BASE_URL` + `LLM_API_KEY` point it at any other OpenAI compatible server (LM Studio, vLLM, Together...). The assistant needs a model with tool calling; all the defaults have it.
+
+## Architecture
 
 ```mermaid
 graph TD
-    A[Slack Workspace] -->|Events: team_join, member_joined_channel| B[Slack Bolt App]
-    B --> C{Basic Research}
-    C -->|Fetch Company Info| D[Company Website]
-    C -->|Fetch GitHub Info| E[GitHub API]
-    C --> F[LangChain / OpenAI]
-    F -->|GPT-4 Analysis| G[Fit Score & Insights]
-    G --> H[(PostgreSQL DB)]
-    G --> I[Slack Private Channel]
+    S[Slack workspace] -->|team_join, member_joined_channel| E[Bolt app, socket mode]
+    E --> Q[(analysis_jobs)]
+    Q --> W[Job worker]
+    W --> R{Research in parallel}
+    R --> C[Company site metadata]
+    R --> D[Wikidata]
+    R --> G[GitHub API]
+    W --> L[LLM: Groq / Gemini / OpenRouter / Ollama / OpenAI]
+    L -->|validated JSON| DB[(member_analyses)]
+    DB --> P[Private leads channel]
+    P -->|buttons, modals| E
+    U[Team member] -->|mention, DM, /agent, App Home| E
+    E --> A[Lead assistant]
+    A -->|read-only tools| DB
 ```
-
-### Sequence Flow
 
 ```mermaid
 sequenceDiagram
-    participant S as Slack Workspace
-    participant A as Agent (Node.js)
-    participant W as Web/GitHub
-    participant O as OpenAI (GPT-4)
-    participant DB as PostgreSQL
-    participant P as Private Slack Channel
+    participant S as Slack
+    participant A as Agent
+    participant Q as Postgres queue
+    participant R as Web / GitHub / Wikidata
+    participant L as LLM
+    participant P as Leads channel
 
-    S->>A: User joins workspace/channel
-    A->>S: Fetch User Profile & Email
-    A->>W: Scrape domain & search GitHub
-    W-->>A: Research Data
-    A->>O: Prompt with User Info + Research
-    O-->>A: JSON Analysis (Fit Score, Insights)
-    A->>DB: Save Analysis & Research Data
-    A->>P: Post Formatted Message
-    A->>DB: Mark as 'sent_to_slack'
+    S->>A: member joins
+    A->>Q: enqueue (one live job per member)
+    Q-->>A: worker claims job (FOR UPDATE SKIP LOCKED)
+    A->>S: users.info
+    A->>R: research in parallel (cached 24h)
+    A->>L: profile + research, marked as untrusted
+    L-->>A: JSON, validated with zod (one repair round if needed)
+    A->>Q: save analysis
+    A->>P: post with review buttons
+    P->>A: Good fit / Welcome DM / Re-analyze
 ```
 
----
+## How the AI parts work
 
-## Prerequisites
+**Structured output that works on free models.** Plenty of free models don't support JSON mode reliably, so the analyzer asks for JSON, takes the first object in the reply that parses (code fences, chatter and `<think>` blocks are skipped) and validates it with zod. If validation fails, the exact error goes back to the model once so it can fix its answer. The score and lists are required; optional fields fall back to defaults instead of costing another call.
 
-- Node.js (v18+ recommended)
-- PostgreSQL database
-- Slack App credentials (with Socket Mode enabled)
-- OpenAI API Key
+**Prompt injection.** Everything that comes from the member or the web is wrapped in `<member>` / `<research>` tags, stripped of angle brackets so it can't close those tags, length capped, and the system prompt says to treat it as data. The eval includes a case where both the title and the scraped site try to force a score of 100. Model output is escaped before it reaches Slack, so a title like `<!channel>` can't ping anyone.
 
-## Installation & Setup
+**The assistant** is a small tool-calling loop (at most five steps) over four read-only tools: `get_top_leads`, `search_members`, `get_member` and `get_stats`. Bad arguments and unknown tools go back to the model as errors so it can recover. The tools hand over email domains, never full addresses, and the assistant only answers in the leads channel or in DMs.
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url>
-   cd SLACK-AI-AGENT
-   ```
+**Data quality.** A wrong GitHub match is worse than none, because the model will reason confidently about a stranger. A profile is only used when it was found by email, or when the name matches exactly *and* the profile points at the member's employer (or the name is unique on GitHub).
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+## Quick start
 
-3. **Environment Configuration:**
-   Copy `.env.sample` to `.env` and fill in your credentials.
+1. **Create the Slack app** from [`manifest.yml`](manifest.yml): api.slack.com/apps → *Create New App* → *From a manifest*. That sets up the scopes, events, slash command and socket mode.
+2. Install it to your workspace. Copy the **bot token** (`xoxb-...`, under OAuth & Permissions) and create an **app-level token** with `connections:write` (`xapp-...`, under Basic Information).
+3. Create a private channel for leads, invite the bot to it and copy the channel id.
+4. Get a free LLM key, for example from [console.groq.com/keys](https://console.groq.com/keys).
+5. Configure and run:
 
-   ```env
-   # Slack Configuration
-   SLACK_BOT_TOKEN=xoxb-your-bot-token
-   SLACK_APP_TOKEN=xapp-your-app-token
-   SLACK_SIGNING_SECRET=your-signing-secret
-   SLACK_PRIVATE_CHANNEL_ID=C1234567890
-
-   # OpenAI Configuration
-   OPENAI_API_KEY=sk-your-openai-key
-
-   # Database Configuration
-   DATABASE_URL=postgres://user:password@localhost:5432/slack_db
-
-   # Company Context (Used for AI Prompt)
-   COMPANY_NAME="Your Company Name"
-   COMPANY_PRODUCT="Your Commercial Product"
-   
-   # Server
-   NODE_ENV=development
-   PORT=3000
-   ```
-
-## Running the Application
-
-**Development Mode (with auto-reload):**
 ```bash
+cp .env.sample .env   # tokens, channel id, LLM key, what your company sells
+npm install
 npm run dev
 ```
 
-**Production Mode:**
+You need a Postgres for `DATABASE_URL`. The quickest way is Docker, which starts the agent and a database together:
+
 ```bash
-npm start
+docker compose up --build
 ```
 
-### Testing the Agent Locally
-In development mode, you can trigger a mock analysis via the local Express endpoint without needing a real Slack event:
+For a fully local setup without any API key, add the Ollama profile:
+
+```bash
+docker compose --profile ollama up --build
+docker compose exec ollama ollama pull llama3.1
+# then set LLM_PROVIDER=ollama and OLLAMA_BASE_URL=http://ollama:11434/v1 in .env
+```
+
+## Configuration
+
+| Variable | Default | |
+| --- | --- | --- |
+| `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | | required |
+| `SLACK_PRIVATE_CHANNEL_ID` | | required. Analyses go here, and only its members can see lead data |
+| `DATABASE_URL` | | required |
+| `DATABASE_SSL` | `true` | `false` for a local Postgres |
+| `LLM_PROVIDER`, `LLM_MODEL` | picked from the key | see the provider table |
+| `COMPANY_NAME`, `COMPANY_PRODUCT`, `COMPANY_ICP` | | what you sell and to whom; the score depends on it |
+| `WATCH_CHANNEL_IDS` | any public channel | only analyze people who join these channels |
+| `REANALYZE_AFTER_DAYS` | `30` | skip members analyzed more recently than this |
+| `ANALYSIS_CONCURRENCY` | `2` | analyses running at the same time |
+| `ANALYSIS_MAX_ATTEMPTS` | `3` | retries (after 30s, 2m, 8m) before a failure notice is posted |
+| `GITHUB_TOKEN` | | optional, raises the GitHub search limit from 10 to 30 a minute. No scopes needed |
+| `DIGEST_ENABLED`, `DIGEST_DAY`, `DIGEST_HOUR`, `DIGEST_TIMEZONE` | `true`, `mon`, `9`, `UTC` | weekly digest schedule |
+| `DATA_RETENTION_DAYS` | `0` | delete analyses older than this; `0` keeps them |
+| `SLACK_COMMAND` | `/agent` | if you rename the command in the manifest |
+| `LOG_LEVEL`, `LOG_FORMAT` | `info`, text | `LOG_FORMAT=json` for structured logs |
+
+The configuration is checked on startup, and the agent tells you exactly what's missing or invalid instead of failing later.
+
+## Using it
+
+| | |
+| --- | --- |
+| `/agent analyze @someone` | research and score a member right now |
+| `/agent leads [days]` | top leads, last 7 days by default |
+| `/agent stats [days]` | totals, tiers, team feedback, top segments |
+| `/agent digest` | post the weekly digest now |
+| `/agent forget @someone` | delete their analyses and posts, and never analyze them again |
+| `@AI Agent who should we talk to first?` | ask in the leads channel or in a DM |
+
+## Evaluating models
+
+```bash
+npm run eval                                   # the provider your .env picks
+npm run eval -- --provider gemini              # compare with another one
+npm run eval -- --model llama-3.1-8b-instant --out small-model.json
+```
+
+Each persona has an expected score band, and some have an expected confidence. The run prints a table, the pass rate and how far the misses landed outside their band. It exits non-zero below 80% (`--min-pass` changes that), so it can gate prompt changes in CI.
+
+## Reliability
+
+- Joins go into a Postgres queue instead of being processed inside the event handler. A partial unique index allows one live job per member, so `team_join` plus a couple of channel joins turns into a single analysis.
+- Workers claim jobs with `FOR UPDATE SKIP LOCKED`, so more than one instance can run.
+- Failed jobs retry with backoff, jobs left running by a crashed process are picked up again, and an analysis that was saved but never posted gets posted on the retry instead of being paid for twice.
+- Shutdown waits for running jobs. Scheduled tasks are claimed in the database, so the digest goes out once even with several instances.
+
+## Development
+
+```bash
+npm test
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres npm test
+```
+
+Without `TEST_DATABASE_URL` the database suites are skipped. With it they run against a real Postgres, including an end-to-end flow that drives the real Bolt app against a fake Slack API: a member joins, gets analyzed and posted, someone marks them a good fit and sends the welcome DM, the assistant is asked about them, and finally `forget` cleans everything up. CI runs all of it on Node 22 and 24 with Postgres 17, and builds the Docker image.
+
+In development mode you can run the pipeline without a Slack event:
 
 ```bash
 curl -X POST http://localhost:3000/test/analyze-member \
   -H "Content-Type: application/json" \
-  -d '{
-    "memberInfo": {
-      "id": "U12345",
-      "name": "Jane Doe",
-      "email": "jane@example.com",
-      "title": "Senior Engineer"
-    }
-  }'
+  -d '{ "post": false, "memberInfo": { "name": "Jane Doe", "email": "jane@stripe.com", "title": "VP Engineering" } }'
 ```
 
----
+### Project layout
 
-## Database Schema
+```
+index.js            entry point: config check, signals
+src/
+  agent.js          wires slack, express, the queue and the scheduler together
+  config.js         env parsing, provider presets, validation
+  db.js             schema and queries
+  queue.js          job worker with concurrency, retries and backoff
+  scheduler.js      weekly digest and daily cleanup
+  ai/               llm client, analyzer, json repair, assistant and its tools, digest summary
+  research/         company site, wikidata, github, email classification, ssrf-safe http client
+  slack/            block kit, buttons and modals, /agent, app home, mentions, access control
+eval/               personas and the eval runner
+test/               node:test suites and a fake slack api
+```
 
-The agent automatically initializes a `member_analyses` table on startup.
+## Deployment
 
-| Column | Type | Description |
-| :--- | :--- | :--- |
-| `id` | SERIAL | Primary Key |
-| `member_id` | VARCHAR | Slack User ID |
-| `member_name` | VARCHAR | User's real name |
-| `member_email` | VARCHAR | User's email address |
-| `fit_score` | INTEGER | AI generated product fit score (0-100) |
-| `insights` | JSONB | Array of AI-generated insights |
-| `recommendations` | JSONB | Array of engagement recommendations |
-| `research_data` | JSONB | Raw scraped data from web/GitHub |
-| `sent_to_slack` | BOOLEAN | Delivery status |
+`render.yaml` sets up a Postgres database and a web service on [Render](https://render.com). Connect the repo as a Blueprint and fill in the Slack tokens and one LLM key when asked. Socket mode keeps an outbound connection open, so use an always-on plan: free instances go to sleep after 15 minutes without incoming traffic, and the bot would drop off with them.
 
----
+Anything that runs a Docker container works as well (Fly.io, Railway, a small VPS). Point `DATABASE_URL` at a managed Postgres such as Neon or Supabase, both of which have free tiers.
 
-## Deployment (Render)
+## Database
 
-This project includes a `render.yaml` file for easy deployment to [Render](https://render.com).
+The schema is created and upgraded automatically on startup.
 
-It provisions:
-1. A managed **PostgreSQL database** (`slack-agent-db`, basic-256mb plan).
-2. A **Web Service** (`slack-ai-agent`, starter plan) running the Node.js app.
-
-**To Deploy:**
-1. Connect your repository to Render via Blueprint.
-2. Render will automatically detect the `render.yaml`.
-3. Provide the required environment variables (`SLACK_BOT_TOKEN`, `OPENAI_API_KEY`, etc.) in the Render dashboard securely.
+| Table | |
+| --- | --- |
+| `member_analyses` | one row per analysis: score, confidence, segment, insights, research, team feedback, welcome DM status, and where it was posted |
+| `analysis_jobs` | the queue: status, attempts, next retry, last error |
+| `opted_out_members` | members who asked to be forgotten |
+| `scheduled_runs` | last run of each scheduled task, so nothing runs twice |
