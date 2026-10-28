@@ -13,11 +13,13 @@ import { JobWorker } from './queue.js';
 import { researchMember } from './research/index.js';
 import { createChatModel } from './ai/llm.js';
 import { analyzeMember } from './ai/analyzer.js';
+import { LeadAssistant } from './ai/assistant.js';
 import { analysisMessage, escape } from './slack/blocks.js';
 import { ChannelAccess } from './slack/access.js';
 import { registerActions } from './slack/actions.js';
 import { registerCommands } from './slack/commands.js';
 import { registerHome } from './slack/home.js';
+import { registerMentions } from './slack/mentions.js';
 
 export class SlackAIAgent {
     constructor() {
@@ -30,6 +32,7 @@ export class SlackAIAgent {
         });
         this.webClient = this.slack.client;
         this.model = createChatModel();
+        this.assistant = new LeadAssistant(this.model);
         this.access = new ChannelAccess(this.webClient, config.slack.channelId);
 
         const jobStore = { claimJob, completeJob, failJob, requeueStaleJobs };
@@ -43,6 +46,7 @@ export class SlackAIAgent {
         registerActions(this.slack, this);
         registerCommands(this.slack, this);
         registerHome(this.slack, this);
+        registerMentions(this.slack, this);
         this.setupExpress();
     }
 

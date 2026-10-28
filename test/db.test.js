@@ -136,6 +136,25 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
             assert.deepEqual(stats.segments, [{ segment: 'Founder', count: 2 }, { segment: 'Student', count: 1 }]);
         });
 
+        test('search matches name, title, segment and email domain', async () => {
+            await db.saveMemberAnalysis(member('U5', { name: 'Ana Silva', title: 'Head of Data', email: 'ana@fintech.io' }), analysis(77, { segment: 'Data leader' }), []);
+
+            assert.deepEqual((await db.searchMembers('silva')).map(m => m.memberId), ['U5']);
+            assert.deepEqual((await db.searchMembers('head of')).map(m => m.memberId), ['U5']);
+            assert.deepEqual((await db.searchMembers('fintech.io')).map(m => m.memberId), ['U5']);
+            assert.equal((await db.searchMembers('Founder')).length, 2);
+        });
+
+        test('search treats LIKE wildcards literally', async () => {
+            assert.deepEqual(await db.searchMembers('%'), []);
+            assert.deepEqual(await db.searchMembers('_'), []);
+        });
+
+        test('latest analysis for a member', async () => {
+            assert.equal((await db.getLatestAnalysis('U1')).fitScore, 92);
+            assert.equal(await db.getLatestAnalysis('UNOPE'), null);
+        });
+
         test('stats for an empty window are zeros, not nulls', async () => {
             await pool.query('TRUNCATE member_analyses');
             const stats = await db.getStats(7);

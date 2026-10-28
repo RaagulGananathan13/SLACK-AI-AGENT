@@ -209,6 +209,33 @@ export async function getTopLeads({ days = 7, limit = 10, minScore = 0 } = {}) {
     return result.rows.map(toRecord);
 }
 
+export async function searchMembers(text, { limit = 10, days = 365 } = {}) {
+    // user text goes into LIKE, so its wildcards have to be taken literally
+    const pattern = `%${String(text).replace(/[\\%_]/g, char => `\\${char}`)}%`;
+    const result = await query(
+        `${latestAnalyses}
+         SELECT * FROM latest
+         WHERE member_name ILIKE $2
+            OR member_title ILIKE $2
+            OR segment ILIKE $2
+            OR summary ILIKE $2
+            OR split_part(member_email, '@', 2) ILIKE $2
+         ORDER BY fit_score DESC, analyzed_at DESC
+         LIMIT $3`, [days, pattern, limit]
+    );
+    return result.rows.map(toRecord);
+}
+
+export async function getLatestAnalysis(memberId) {
+    const result = await query(
+        `SELECT * FROM member_analyses
+         WHERE member_id = $1
+         ORDER BY analyzed_at DESC, id DESC
+         LIMIT 1`, [memberId]
+    );
+    return toRecord(result.rows[0]);
+}
+
 export async function getStats(days = 30) {
     const hot = tiers[0].min;
     const [totals, segments] = await Promise.all([
