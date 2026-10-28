@@ -220,7 +220,9 @@ describe('slack flows', { skip: !process.env.TEST_DATABASE_URL && 'TEST_DATABASE
     test('/agent forget removes her data and post and stops new analyses', async () => {
         await dispatch(agent.slack, commandBody(slack, 'forget <@UJANE|jane>'));
 
-        assert.deepEqual(slack.callsTo('chat.delete'), [{ channel: 'CLEADS', ts: analysis.slackTs }]);
+        // bolt's listener client adds team_id to every call, only the target matters here
+        const deleted = slack.callsTo('chat.delete').map(({ channel, ts }) => ({ channel, ts }));
+        assert.deepEqual(deleted, [{ channel: 'CLEADS', ts: analysis.slackTs }]);
         assert.match(lastResponse().text, /Deleted 1 analysis record/);
         assert.equal(await db.getLatestAnalysis('UJANE'), null);
 
