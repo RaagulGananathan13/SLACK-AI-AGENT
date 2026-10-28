@@ -62,6 +62,9 @@ const config = {
         name: process.env.COMPANY_NAME || 'Your Company',
         product: process.env.COMPANY_PRODUCT || 'Your Product'
     },
+    github: {
+        token: process.env.GITHUB_TOKEN
+    },
     database: {
         url: process.env.DATABASE_URL,
         ssl: process.env.DATABASE_SSL !== 'false'
