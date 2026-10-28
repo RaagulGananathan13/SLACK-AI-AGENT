@@ -26,8 +26,10 @@ describe('database', { skip: !url && 'TEST_DATABASE_URL not set' }, () => {
     let pool;
 
     before(async () => {
-        pool = new pg.Pool({ connectionString: url });
-        await pool.query('DROP TABLE IF EXISTS member_analyses, analysis_jobs, opted_out_members, scheduled_runs CASCADE');
+        // test files run in parallel, so each one that touches postgres gets its own schema
+        pool = new pg.Pool({ connectionString: url, options: '-c search_path=db_tests' });
+        await pool.query('DROP SCHEMA IF EXISTS db_tests CASCADE');
+        await pool.query('CREATE SCHEMA db_tests');
         await db.initDatabase(pool);
         // the schema runs on every boot, so a second pass has to be harmless
         await db.initDatabase(pool);

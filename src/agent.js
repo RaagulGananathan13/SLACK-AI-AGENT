@@ -25,16 +25,17 @@ import { registerHome } from './slack/home.js';
 import { registerMentions } from './slack/mentions.js';
 
 export class SlackAIAgent {
-    constructor() {
+    // tests pass their own bolt app and a scripted model, everything else is the real thing
+    constructor({ slack, model } = {}) {
         this.app = express()
-        this.slack = new App({
+        this.slack = slack || new App({
             token: config.slack.botToken,
             signingSecret: config.slack.signingSecret,
             socketMode: true,
             appToken: config.slack.appToken
         });
         this.webClient = this.slack.client;
-        this.model = createChatModel();
+        this.model = model || createChatModel();
         this.assistant = new LeadAssistant(this.model);
         this.access = new ChannelAccess(this.webClient, config.slack.channelId);
 
