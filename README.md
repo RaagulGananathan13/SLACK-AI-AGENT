@@ -31,7 +31,7 @@ On top of that:
 
 | Provider | Default model | Key | |
 | --- | --- | --- | --- |
-| Groq | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | free tier, very fast |
+| Groq | `openai/gpt-oss-120b` | `GROQ_API_KEY` | free tier, very fast |
 | Google Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` | free tier from AI Studio |
 | OpenRouter | `openrouter/free` | `OPENROUTER_API_KEY` | routes to a free model that's available |
 | Ollama | `llama3.1` | none | runs on your own machine |
@@ -156,7 +156,7 @@ The configuration is checked on startup, and the agent tells you exactly what's 
 ```bash
 npm run eval                                   # the provider your .env picks
 npm run eval -- --provider gemini              # compare with another one
-npm run eval -- --model llama-3.1-8b-instant --out small-model.json
+npm run eval -- --model openai/gpt-oss-20b --out small-model.json
 ```
 
 Each persona has an expected score band, and some have an expected confidence. The run prints a table, the pass rate and how far the misses landed outside their band. It exits non-zero below 80% (`--min-pass` changes that), so it can gate prompt changes in CI.

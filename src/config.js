@@ -13,7 +13,8 @@ const list = value => (value || '').split(',').map(item => item.trim()).filter(B
 export const providers = {
     groq: {
         baseURL: 'https://api.groq.com/openai/v1',
-        model: 'llama-3.3-70b-versatile',
+        // groq retired the llama 3.x models in august 2026, this is their suggested replacement
+        model: 'openai/gpt-oss-120b',
         apiKeyEnv: 'GROQ_API_KEY'
     },
     gemini: {
